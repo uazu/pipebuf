@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# First build with all combinations of features to check for doc
+# issues (bad links etc, e.g. especially references to QCellOwner from
+# no_std docs).  Then finally build as docs.rs sees it to visually
+# check the "std" and "alloc" annotations on some types.
+
+echo "=== Features: std" &&
+cargo doc &&
+echo "=== Features: none" &&
+cargo doc --no-default-features &&
+echo "=== Features: alloc" &&
+cargo doc --no-default-features --features alloc &&
+echo "=== Features: static" &&
+cargo doc --no-default-features --features static &&
+echo "=== docs.rs build with feature labels" &&
+RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features

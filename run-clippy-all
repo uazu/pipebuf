@@ -1,0 +1,10 @@
+#!/bin/bash
+
+echo "=== Features: std" &&
+cargo clippy &&
+echo "=== Features: none" &&
+cargo clippy --no-default-features &&
+echo "=== Features: alloc" &&
+cargo clippy --no-default-features --features alloc &&
+echo "=== Features: static" &&
+cargo clippy --no-default-features --features static

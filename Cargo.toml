@@ -1,0 +1,28 @@
+[package]
+name = "pipebuf"
+version = "0.2.0"
+edition = "2021"
+authors = ["Jim Peters <jim@uazu.net>"]
+
+description = "Efficient byte-stream pipe buffer"
+license = "MIT/Apache-2.0"
+readme = "README.md"
+
+repository = "https://github.com/uazu/pipebuf"
+documentation = "https://docs.rs/pipebuf"
+
+keywords = ["stream","queue","buffer","collection","no_std"]
+categories = [ "data-structures", "memory-management", "rust-patterns", "parsing", "no-std::no-alloc" ]
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+static = []
+
+# For docs.rs, build docs with feature labels.  Search for `docsrs` in
+# source to see the things that are labelled.  To test this use:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
