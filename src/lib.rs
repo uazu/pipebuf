@@ -1,3 +1,15 @@
+//! [![license:MIT/Apache-2.0][1]](https://github.com/uazu/pipebuf)&nbsp;
+//! [![github:uazu/pipebuf][2]](https://github.com/uazu/pipebuf)&nbsp;
+//! [![crates.io:pipebuf][3]](https://crates.io/crates/pipebuf)&nbsp;
+//! [![docs.rs:pipebuf][4]](https://docs.rs/pipebuf)&nbsp;
+//! [![Coverage:99%][5]](https://docs.rs/pipebuf)
+//!
+//! [1]: https://img.shields.io/badge/license-MIT%2FApache--2.0-blue
+//! [2]: https://img.shields.io/badge/github-uazu%2Fstakker-brightgreen
+//! [3]: https://img.shields.io/badge/crates.io-stakker-red
+//! [4]: https://img.shields.io/badge/docs.rs-stakker-purple
+//! [5]: https://img.shields.io/badge/Coverage-99%25-blue
+//!
 //! Efficient byte-stream pipe buffer
 //!
 //! [`PipeBuf`] is a buffer intended to be accessed by both the
@@ -220,12 +232,13 @@
 //! # Safety and efficiency
 //!
 //! This crate is compiled with `#[forbid(unsafe)]` so it is sound in
-//! a Rust sense.  The use of [`PBufRd`] and [`PBufWr`] references
-//! means that the consumer can only do consumer operations, and the
-//! producer can only do producer operations.  These reference types
-//! cost no more than a `&mut PipeBuf`, so this protection is for
-//! free.  In addition most operations on the [`PipeBuf`] generate
-//! very little code and can be inlined by the compiler.
+//! a Rust sense, and it has 99% test coverage.  The use of [`PBufRd`]
+//! and [`PBufWr`] references means that the consumer can only do
+//! consumer operations, and the producer can only do producer
+//! operations.  These reference types cost no more than a `&mut
+//! PipeBuf`, so this protection is for free.  In addition most
+//! operations on the [`PipeBuf`] generate very little code and can be
+//! inlined by the compiler.
 //!
 //! However, this is a low-level buffer.  It is optimised for speed
 //! rather than to exclude all possible foot-guns.  Here are some ways
@@ -413,17 +426,22 @@ pub use pair::{PBufRdWr, PipeBufPair};
 /// values both before and after an operation.  The tuples can then be
 /// compared to see whether there was any change.
 ///
-/// ```
-/// # use pipebuf::{tripwire, PipeBuf};
-/// # let p1 = PipeBuf::new();
-/// # let p2 = PipeBuf::new();
-/// # let p3 = PipeBuf::new();
-/// # let p4 = PipeBuf::new();
-/// let before = tripwire!(p1, p2, p3, p4);
-/// // some operation on p1/p2/p3/p4 ...
-/// let after = tripwire!(p1, p2, p3, p4);
-/// let activity = before != after;
-/// ```
+#[cfg_attr(
+    any(feature = "std", feature = "alloc"),
+    doc = "
+```
+# use pipebuf::{tripwire, PipeBuf};
+# let p1 = PipeBuf::new();
+# let p2 = PipeBuf::new();
+# let p3 = PipeBuf::new();
+# let p4 = PipeBuf::new();
+let before = tripwire!(p1, p2, p3, p4);
+// some operation on p1/p2/p3/p4 ...
+let after = tripwire!(p1, p2, p3, p4);
+let activity = before != after;
+```
+"
+)]
 #[macro_export]
 macro_rules! tripwire {
     ($($x:expr),+) => {{
@@ -434,4 +452,3 @@ macro_rules! tripwire {
 }
 
 //@@@ TODO: Add a full example or two
-//@@@ TODO: Add tests

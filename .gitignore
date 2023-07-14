@@ -1,8 +1,8 @@
 /target
 /Cargo.lock
+/kcov
 EXPORT
 *.org
-kcov*
 **/*~
 **/tmp*
 **/_*

@@ -168,13 +168,19 @@ impl<'a> PBufRd<'a> {
     /// error (for example `WouldBlock`).
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    #[track_caller]
     pub fn output_to(&mut self, sink: &mut impl Write, force_flush: bool) -> std::io::Result<()> {
         while !self.is_empty() {
             match sink.write(self.data()) {
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
                 Err(e) => return Err(e),
                 Ok(0) => break, // Should never happen, but deal with it
-                Ok(len) => self.consume(len),
+                Ok(len) => {
+                    if len > self.len() {
+                        panic!("Faulty Write implementation consumed more data than it was given");
+                    }
+                    self.consume(len);
+                }
             }
         }
         if self.consume_push() || force_flush {

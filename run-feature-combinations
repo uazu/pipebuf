@@ -1,0 +1,6 @@
+#!/bin/bash
+
+echo "std"
+echo ""
+echo "alloc"
+echo "static"

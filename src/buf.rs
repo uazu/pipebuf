@@ -77,7 +77,17 @@ impl PipeBuf {
         }
     }
 
-    /// Create a new pipe buffer backed by the given static memory
+    /// Create a new pipe buffer backed by the given static memory.
+    /// This is useful for `no_std` without an allocator.  This is a
+    /// safe call, but requires use of `unsafe` in caller code because
+    /// the caller must guarantee that no other code is using this
+    /// static memory.
+    ///
+    /// ```
+    ///# use pipebuf::PipeBuf;
+    /// static mut BUF: [u8; 1024] = [0; 1024];
+    /// let _ = PipeBuf::new_static(unsafe { &mut BUF });
+    /// ```
     #[cfg(feature = "static")]
     #[cfg_attr(docsrs, doc(cfg(feature = "static")))]
     #[inline]
@@ -326,3 +336,63 @@ pub enum PBufState {
 /// [`tripwire!`]: macro.tripwire.html
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub struct PBufTrip(usize);
+
+#[cfg(test)]
+mod test {
+    // This test is here so that it can directly check inc/dec of
+    // tripwire values, which is not possible from outside the crate
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn tripwire() {
+        let mut p;
+        let mut t;
+
+        macro_rules! assert_inc {
+            () => {{
+                let n = p.tripwire();
+                assert!(t.0 < n.0, "Expecting increase: {} -> {}", t.0, n.0);
+                t = n;
+            }};
+        }
+        macro_rules! assert_dec {
+            () => {{
+                let n = p.tripwire();
+                assert!(t.0 > n.0, "Expecting decrease: {} -> {}", t.0, n.0);
+                t = n;
+            }};
+        }
+
+        p = super::PipeBuf::new();
+        t = p.tripwire();
+        p.wr().append(b"X");
+        assert_inc!();
+        p.rd().consume(1);
+        assert_dec!();
+        p.wr().push();
+        assert_inc!();
+        assert!(p.rd().consume_push());
+        assert_dec!();
+        p.wr().close();
+        assert_inc!();
+        assert!(p.rd().consume_eof());
+        assert_dec!();
+        let _ = t;
+
+        p = super::PipeBuf::default(); // Same as ::new()
+        t = p.tripwire();
+        p.wr().append(b"X");
+        assert_inc!();
+        p.wr().push();
+        assert_inc!();
+        assert!(p.rd().consume_push());
+        assert_dec!();
+        p.rd().consume(1);
+        assert_dec!();
+        p.wr().abort();
+        assert_inc!();
+        assert!(p.rd().consume_eof());
+        assert_dec!();
+
+        let _ = t;
+    }
+}

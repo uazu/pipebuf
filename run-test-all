@@ -2,5 +2,5 @@
 
 ./run-feature-combinations | while read features; do
     echo "=== Features: $features"
-    cargo clippy --no-default-features --features "$features" || exit 1
+    cargo test --no-default-features --features "$features" || exit 1
 done

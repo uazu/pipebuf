@@ -1,0 +1,64 @@
+#!/bin/bash
+
+die() { echo "ABORT: $*"; exit 1; }
+
+TARGET=${CARGO_TARGET_DIR:-./target}
+
+rm -r kcov >/dev/null 2>&1
+mkdir kcov || die "Can't creat kcov/"
+
+COUNT=10000
+./run-feature-combinations | while read features; do
+    echo "=== Features: $features"
+
+    # Depending on the Rust version, test executables may be
+    # dumped in $TARGET/debug or $TARGET/debug/deps
+    rm -r $(find $TARGET/debug -name "pipebuf-*") >/dev/null 2>&1
+
+    # Can't use --no-run because it excludes some of the tests.
+    # Need "link-dead-code" to get all the source (including
+    # source without coverage) to show up.  Need "opt-level=0" or
+    # otherwise "link-dead-code" fails with linking problems.
+    RUSTFLAGS="-C link-dead-code -C codegen-units=1 -C opt-level=0" \
+             cargo test --no-default-features --features "$features" >kcov/test-$$ 2>&1 ||
+        die "cargo test failed; see kcov/test-$$"
+    rm kcov/test-$$
+
+    # Expect two test binaries to be generated: one for the unit
+    # tests, the other for the integration tests.  Requires that
+    # integration tests be called pipebuf.rs
+    set ""
+    set $(find $TARGET/debug -name "pipebuf-*" -type f -executable)
+
+    [ -z "$1" ] && die "Can't find first test binary in $TARGET/debug"
+    [ -z "$2" ] && die "Can't find second test binary in $TARGET/debug"
+    [ ! -z "$3" ] && die "Found more than two test binaries in $TARGET/debug"
+
+    for EXE in "$@"
+    do
+        OUT=kcov/out-$$-${COUNT#1}
+        let COUNT=COUNT+1
+        mkdir $OUT
+
+        kcov --verify \
+             --include-pattern=pipebuf/src \
+             $OUT $EXE ||
+            die "kcov failed"
+    done
+done || exit 1
+
+echo "=== MERGING reports to kcov/out/ ..."
+mkdir kcov/out
+kcov --merge kcov/out kcov/out-*
+
+# Check that no files have been excluded
+( find src -name "*.rs" |
+      fgrep -v test |
+      perl -pe 's|.*/||';
+) | sort >kcov/list-source
+ls kcov/out/kcov-merged/*.rs.*.html |
+    perl -pe 's/\.rs.*/.rs/; s|.*/||;' |
+    sort >kcov/list-covered
+cmp kcov/list-source kcov/list-covered >/dev/null 2>&1 || {
+    echo "WARNING: Some files not included in report:" $(comm -23 kcov/list-source kcov/list-covered)
+}

@@ -108,7 +108,9 @@ impl<'a> PBufWr<'a> {
         }
 
         #[cfg(feature = "static")]
-        panic!("Not enough space available in fixed-capacity PipeBuf");
+        if self.pb.wr + _reserve > self.pb.data.len() {
+            panic!("Not enough space available in fixed-capacity PipeBuf");
+        }
     }
 
     /// Commit the given number of bytes to the pipe buffer.  This
@@ -151,6 +153,7 @@ impl<'a> PBufWr<'a> {
     /// marked as closed or aborted.  For fixed-capacity panics, see
     /// [`PBufWr::space`].
     #[inline]
+    #[track_caller]
     pub fn append(&mut self, data: &[u8]) {
         let len = data.len();
         self.space(len).copy_from_slice(data);
