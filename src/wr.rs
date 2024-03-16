@@ -11,11 +11,11 @@ use std::io::{ErrorKind, Read};
 /// the same size and efficiency.  However unlike a `&mut` reference,
 /// reborrowing doesn't happen automatically, but it can still be done
 /// just as efficiently using [`PBufWr::reborrow`].
-pub struct PBufWr<'a, T = u8> {
+pub struct PBufWr<'a, T: 'static = u8> {
     pub(crate) pb: &'a mut PipeBuf<T>,
 }
 
-impl<'a, T: Copy + Default> PBufWr<'a, T> {
+impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     /// Create a new reference from this one, reborrowing it.  Thanks
     /// to the borrow checker, the original reference will be
     /// inaccessible until the returned reference's lifetime ends.

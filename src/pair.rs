@@ -14,14 +14,14 @@ use super::{PBufRd, PBufTrip, PBufWr, PipeBuf};
 /// upper/lower is the most helpful terminology, but left/right is
 /// offered as an alternative.
 ///
-pub struct PipeBufPair<T = u8> {
+pub struct PipeBufPair<T: 'static = u8> {
     /// Downwards-flowing pipe
     pub down: PipeBuf<T>,
     /// Upwards-flowing pipe
     pub up: PipeBuf<T>,
 }
 
-impl<T: Copy + Default> PipeBufPair<T> {
+impl<T: Copy + Default + 'static> PipeBufPair<T> {
     /// Create a new empty bidirectional pipe
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
@@ -134,7 +134,7 @@ impl<T: Copy + Default> PipeBufPair<T> {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-impl<T: Copy + Default> Default for PipeBufPair<T> {
+impl<T: Copy + Default + 'static> Default for PipeBufPair<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -147,14 +147,14 @@ impl<T: Copy + Default> Default for PipeBufPair<T> {
 /// [`PipeBufPair::left`] and [`PipeBufPair::right`].  Reborrow it
 /// using [`PBufRdWr::reborrow`], or by reborrowing the members
 /// individually.
-pub struct PBufRdWr<'a, T = u8> {
+pub struct PBufRdWr<'a, T: 'static = u8> {
     /// Consumer reference for the incoming pipe
     pub rd: PBufRd<'a, T>,
     /// Producer reference for the outgoing pipe
     pub wr: PBufWr<'a, T>,
 }
 
-impl<'a, T: Copy + Default> PBufRdWr<'a, T> {
+impl<'a, T: Copy + Default + 'static> PBufRdWr<'a, T> {
     /// Create new references from these, reborrowing them.  Thanks to
     /// the borrow checker, the original references will be
     /// inaccessible until the returned references' lifetimes end.

@@ -16,7 +16,7 @@ use std::io::{ErrorKind, Read, Write};
 /// from the buffer.  These are the references that should be passed
 /// to component code.  See this crate's top-level documentation for
 /// further discussion of how this works.
-pub struct PipeBuf<T = u8> {
+pub struct PipeBuf<T: 'static = u8> {
     #[cfg(any(feature = "alloc", feature = "std"))]
     pub(crate) data: Vec<T>,
     #[cfg(not(any(feature = "alloc", feature = "std")))]
@@ -28,7 +28,7 @@ pub struct PipeBuf<T = u8> {
     pub(crate) fixed_capacity: bool,
 }
 
-impl<T: Copy + Default> PipeBuf<T> {
+impl<T: Copy + Default + 'static> PipeBuf<T> {
     /// Create a new empty pipe buffer
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
@@ -257,7 +257,7 @@ impl Write for PipeBuf<u8> {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-impl<T: Copy + Default> Default for PipeBuf<T> {
+impl<T: Copy + Default + 'static> Default for PipeBuf<T> {
     fn default() -> Self {
         Self::new()
     }
