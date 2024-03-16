@@ -11,18 +11,18 @@ use std::io::{ErrorKind, Read};
 /// the same size and efficiency.  However unlike a `&mut` reference,
 /// reborrowing doesn't happen automatically, but it can still be done
 /// just as efficiently using [`PBufWr::reborrow`].
-pub struct PBufWr<'a> {
-    pub(crate) pb: &'a mut PipeBuf,
+pub struct PBufWr<'a, T = u8> {
+    pub(crate) pb: &'a mut PipeBuf<T>,
 }
 
-impl<'a> PBufWr<'a> {
+impl<'a, T: Copy + Default> PBufWr<'a, T> {
     /// Create a new reference from this one, reborrowing it.  Thanks
     /// to the borrow checker, the original reference will be
     /// inaccessible until the returned reference's lifetime ends.
     /// The cost is just a pointer copy, just as for automatic `&mut`
     /// reborrowing.
     #[inline(always)]
-    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufWr<'b>
+    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufWr<'b, T>
     where
         'a: 'b,
         'r: 'b,
@@ -71,7 +71,7 @@ impl<'a> PBufWr<'a> {
     /// number of bytes.
     #[inline]
     #[track_caller]
-    pub fn space(&mut self, reserve: usize) -> &mut [u8] {
+    pub fn space(&mut self, reserve: usize) -> &mut [T] {
         if self.pb.rd == self.pb.wr {
             self.pb.rd = 0;
             self.pb.wr = 0;
@@ -104,7 +104,7 @@ impl<'a> PBufWr<'a> {
             }
             let cap = (self.pb.wr + _reserve).max(_reserve * 2);
             self.pb.data.reserve(cap - self.pb.data.len());
-            self.pb.data.resize(self.pb.data.capacity(), 0);
+            self.pb.data.resize(self.pb.data.capacity(), T::default());
         }
 
         #[cfg(feature = "static")]
@@ -154,7 +154,7 @@ impl<'a> PBufWr<'a> {
     /// [`PBufWr::space`].
     #[inline]
     #[track_caller]
-    pub fn append(&mut self, data: &[u8]) {
+    pub fn append(&mut self, data: &[T]) {
         let len = data.len();
         self.space(len).copy_from_slice(data);
         self.commit(len);
@@ -228,7 +228,7 @@ impl<'a> PBufWr<'a> {
     pub fn write_with<E>(
         &mut self,
         reserve: usize,
-        mut cb: impl FnMut(&mut [u8]) -> Result<usize, E>,
+        mut cb: impl FnMut(&mut [T]) -> Result<usize, E>,
     ) -> Result<usize, E> {
         let len = cb(self.space(reserve))?;
         self.commit(len);
@@ -258,7 +258,7 @@ impl<'a> PBufWr<'a> {
     pub fn write_with_noerr(
         &mut self,
         reserve: usize,
-        mut cb: impl FnMut(&mut [u8]) -> usize,
+        mut cb: impl FnMut(&mut [T]) -> usize,
     ) -> usize {
         let len = cb(self.space(reserve));
         self.commit(len);
@@ -277,7 +277,9 @@ impl<'a> PBufWr<'a> {
     pub fn exceeds_limit(&self, limit: usize) -> bool {
         (self.pb.wr - self.pb.rd) > limit
     }
+}
 
+impl<'a> PBufWr<'a, u8> {
     /// Input data from the given `Read` implementation, up to the
     /// given length.  If EOF is indicated by the `Read` source
     /// through an `Ok(0)` return, then a normal
@@ -319,7 +321,7 @@ impl<'a> PBufWr<'a> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<'a> std::io::Write for PBufWr<'a> {
+impl<'a> std::io::Write for PBufWr<'a, u8> {
     /// Write data to the pipe-buffer
     fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         self.pb.write(data)

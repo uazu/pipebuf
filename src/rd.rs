@@ -11,18 +11,18 @@ use std::io::{ErrorKind, Write};
 /// the same size and efficiency.  However unlike a `&mut` reference,
 /// reborrowing doesn't happen automatically, but it can still be done
 /// just as efficiently using [`PBufRd::reborrow`].
-pub struct PBufRd<'a> {
-    pub(crate) pb: &'a mut PipeBuf,
+pub struct PBufRd<'a, T = u8> {
+    pub(crate) pb: &'a mut PipeBuf<T>,
 }
 
-impl<'a> PBufRd<'a> {
+impl<'a, T: Copy + Default> PBufRd<'a, T> {
     /// Create a new reference from this one, reborrowing it.  Thanks
     /// to the borrow checker, the original reference will be
     /// inaccessible until the returned reference's lifetime ends.
     /// The cost is just a pointer copy, just as for automatic `&mut`
     /// reborrowing.
     #[inline(always)]
-    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufRd<'b>
+    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufRd<'b, T>
     where
         'a: 'b,
         'r: 'b,
@@ -49,7 +49,7 @@ impl<'a> PBufRd<'a> {
     /// process any data, it should do so, and then indicate how many
     /// bytes have been consumed using [`PBufRd::consume`].
     #[inline(always)]
-    pub fn data(&self) -> &[u8] {
+    pub fn data(&self) -> &[T] {
         &self.pb.data[self.pb.rd..self.pb.wr]
     }
 
@@ -154,6 +154,33 @@ impl<'a> PBufRd<'a> {
         self.pb.state
     }
 
+    /// Forward all the data found in this pipe to another pipe.  Also
+    /// forwards "push" and EOF indications.
+    pub fn forward(&mut self, mut dest: PBufWr<'_, T>) {
+        if dest.is_eof() {
+            return;
+        }
+
+        let data = self.data();
+        let len = data.len();
+        dest.space(len).copy_from_slice(data);
+        dest.commit(len);
+        self.consume(len);
+
+        if self.consume_push() {
+            dest.push();
+        }
+        if self.consume_eof() {
+            if self.is_aborted() {
+                dest.abort();
+            } else {
+                dest.close();
+            }
+        }
+    }
+}
+
+impl<'a> PBufRd<'a, u8> {
     /// Output as much data as possible to the given `Write`
     /// implementation.  The "push" state is converted into a `flush`
     /// call if the pipe buffer is emptied.  Also a flush can be
@@ -194,36 +221,11 @@ impl<'a> PBufRd<'a> {
         }
         Ok(())
     }
-
-    /// Forward all the data found in this pipe to another pipe.  Also
-    /// forwards "push" and EOF indications.
-    pub fn forward(&mut self, mut dest: PBufWr<'_>) {
-        if dest.is_eof() {
-            return;
-        }
-
-        let data = self.data();
-        let len = data.len();
-        dest.space(len).copy_from_slice(data);
-        dest.commit(len);
-        self.consume(len);
-
-        if self.consume_push() {
-            dest.push();
-        }
-        if self.consume_eof() {
-            if self.is_aborted() {
-                dest.abort();
-            } else {
-                dest.close();
-            }
-        }
-    }
 }
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<'a> std::io::Read for PBufRd<'a> {
+impl<'a> std::io::Read for PBufRd<'a, u8> {
     /// Read data from the pipe-buffer, as much as is available.  The
     /// following returns are possible:
     ///
