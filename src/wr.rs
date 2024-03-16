@@ -72,22 +72,26 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     #[inline]
     #[track_caller]
     pub fn space(&mut self, reserve: usize) -> &mut [T] {
+        self.maybe_space(reserve)
+            .expect("Not enough space available in fixed-capacity PipeBuf")
+    }
+
+    #[inline]
+    #[track_caller]
+    pub fn maybe_space(&mut self, reserve: usize) -> Option<&mut [T]> {
         if self.pb.rd == self.pb.wr {
             self.pb.rd = 0;
             self.pb.wr = 0;
         }
 
-        if self.pb.wr + reserve > self.pb.data.len() {
-            self.make_space(reserve);
-        }
-
-        &mut self.pb.data[self.pb.wr..self.pb.wr + reserve]
+        (self.pb.wr + reserve > self.pb.data.len() || self.make_space(reserve))
+            .then_some(&mut self.pb.data[self.pb.wr..self.pb.wr + reserve])
     }
 
     #[inline(never)]
     #[cold]
     #[track_caller]
-    fn make_space(&mut self, _reserve: usize) {
+    fn make_space(&mut self, _reserve: usize) -> bool {
         // Caller guarantees that if .rd == .wr, then now both .rd and
         // .wr will be zero, so if .rd > 0 then there is something to
         // copy down
@@ -100,7 +104,7 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
         #[cfg(any(feature = "std", feature = "alloc"))]
         if self.pb.wr + _reserve > self.pb.data.len() {
             if self.pb.fixed_capacity {
-                panic!("Not enough space available in fixed-capacity PipeBuf");
+                return false;
             }
             let cap = (self.pb.wr + _reserve).max(_reserve * 2);
             self.pb.data.reserve(cap - self.pb.data.len());
@@ -109,8 +113,9 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
 
         #[cfg(feature = "static")]
         if self.pb.wr + _reserve > self.pb.data.len() {
-            panic!("Not enough space available in fixed-capacity PipeBuf");
+            return false;
         }
+        true
     }
 
     /// Commit the given number of bytes to the pipe buffer.  This
