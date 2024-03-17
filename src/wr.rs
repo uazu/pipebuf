@@ -85,6 +85,12 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
         }
 
         if self.pb.wr + reserve > self.pb.data.len() {
+            println!(
+                "{} wr, {} reserve, {} len",
+                self.pb.wr,
+                reserve,
+                self.pb.data.len()
+            );
             return Some(&mut self.pb.data[self.pb.wr..self.pb.wr + reserve]);
         }
         self.make_space(reserve)
