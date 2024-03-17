@@ -153,6 +153,23 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
         self.pb.wr = wr;
     }
 
+    /// Return the amount of free space left in the underlying [`PipeBuf`],
+    /// if the capacity is fixed, otherwise None. This can be used as part
+    /// of a backpressure-aware processing step, by only consuming
+    /// sufficient data to create [`PBufWr::free_space`] elements of
+    /// output.
+    #[inline]
+    pub fn free_space(&self) -> Option<usize> {
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        return self
+            .pb
+            .fixed_capacity
+            .then_some(self.pb.data.len() - (self.pb.wr - self.pb.rd));
+
+        #[cfg(feature = "static")]
+        return Some(self.pb.data.len() - (self.pb.wr - self.pb.rd));
+    }
+
     /// Set the "push" state on the buffer, which the consumer may use
     /// to decide whether or not to flush data immediately.
     #[inline]
