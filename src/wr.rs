@@ -76,6 +76,18 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
             .expect("Not enough space available in fixed-capacity PipeBuf")
     }
 
+    /// Get a reference to a mutable slice of `reserve` bytes of free
+    /// space where new data may be written.  Once written, the data
+    /// must be committed immediately using [`PBufWr::commit`], before
+    /// any other operation that might compact the buffer.
+    ///
+    /// Note that for efficiency the free space will not be
+    /// initialised to zeros.  It will contain some jumble of bytes
+    /// previously written to the pipe.  You must not make any
+    /// assumptions about this data.
+    ///
+    /// Returns None if there is not enough free space available in a
+    /// fixed-capacity [`PipeBuf`].
     #[inline]
     #[track_caller]
     pub fn maybe_space(&mut self, reserve: usize) -> Option<&mut [T]> {
