@@ -84,8 +84,11 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
             self.pb.wr = 0;
         }
 
-        (self.pb.wr + reserve > self.pb.data.len() || self.make_space(reserve))
-            .then_some(&mut self.pb.data[self.pb.wr..self.pb.wr + reserve])
+        if self.pb.wr + reserve > self.pb.data.len() {
+            return Some(&mut self.pb.data[self.pb.wr..self.pb.wr + reserve]);
+        }
+        self.make_space(reserve)
+            .then(|| &mut self.pb.data[self.pb.wr..self.pb.wr + reserve])
     }
 
     #[inline(never)]
