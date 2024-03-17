@@ -85,6 +85,7 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
         }
 
         if self.pb.wr + reserve > self.pb.data.len() {
+            println!("{}", self.pb.wr + reserve > self.pb.data.len());
             println!(
                 "{} wr, {} reserve, {} len",
                 self.pb.wr,
