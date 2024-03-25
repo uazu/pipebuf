@@ -251,7 +251,7 @@ fn states() {
 #[test]
 #[should_panic]
 fn no_space() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     // Note that capacity won't be exactly 10 since `Vec` rounds up,
     // so testing 11 or so on won't work.
     p.wr().space(100);
@@ -261,7 +261,7 @@ fn no_space() {
 #[test]
 #[should_panic]
 fn commit_overflow() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     // Note that capacity won't be exactly 10 since `Vec` rounds up,
     // so testing 11 or so on won't work.
     p.wr().commit(100);
@@ -271,7 +271,7 @@ fn commit_overflow() {
 #[test]
 #[should_panic]
 fn consume_overflow() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     p.rd().consume(1);
 }
 
@@ -279,7 +279,7 @@ fn consume_overflow() {
 #[test]
 #[should_panic]
 fn commit_after_close() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     p.wr().close();
     p.wr().commit(1);
 }
@@ -288,7 +288,7 @@ fn commit_after_close() {
 #[test]
 #[should_panic]
 fn commit_after_abort() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     p.wr().abort();
     p.wr().commit(1);
 }
@@ -297,7 +297,7 @@ fn commit_after_abort() {
 #[test]
 #[should_panic]
 fn close_after_close() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     p.wr().close();
     p.wr().close();
 }
@@ -306,7 +306,7 @@ fn close_after_close() {
 #[test]
 #[should_panic]
 fn close_after_abort() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     p.wr().abort();
     p.wr().close();
 }
@@ -315,7 +315,7 @@ fn close_after_abort() {
 #[test]
 #[should_panic]
 fn abort_after_close() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     p.wr().close();
     p.wr().abort();
 }
@@ -324,7 +324,7 @@ fn abort_after_close() {
 #[test]
 #[should_panic]
 fn abort_after_abort() {
-    let mut p = fixed_capacity_pipebuf!(10);
+    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
     p.wr().abort();
     p.wr().abort();
 }

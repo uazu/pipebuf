@@ -431,10 +431,10 @@ pub use pair::{PBufRdWr, PipeBufPair};
     doc = "
 ```
 # use pipebuf::{tripwire, PipeBuf};
-# let p1 = PipeBuf::new();
-# let p2 = PipeBuf::new();
-# let p3 = PipeBuf::new();
-# let p4 = PipeBuf::new();
+# let p1 = PipeBuf::<u8>::new();
+# let p2 = PipeBuf::<u8>::new();
+# let p3 = PipeBuf::<u8>::new();
+# let p4 = PipeBuf::<u8>::new();
 let before = tripwire!(p1, p2, p3, p4);
 // some operation on p1/p2/p3/p4 ...
 let after = tripwire!(p1, p2, p3, p4);
