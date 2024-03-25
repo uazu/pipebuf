@@ -96,8 +96,18 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
             self.pb.wr = 0;
         }
 
-        (self.pb.wr + reserve <= self.pb.data.len() || self.make_space(reserve))
+        self.ensure_space(reserve)
             .then(|| &mut self.pb.data[self.pb.wr..self.pb.wr + reserve])
+    }
+
+    #[inline]
+    #[track_caller]
+    fn ensure_space(&mut self, reserve: usize) -> bool {
+        if self.pb.wr + reserve <= self.pb.data.len() {
+            true
+        } else {
+            self.make_space(reserve)
+        }
     }
 
     #[inline(never)]
@@ -166,7 +176,7 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
             .fixed_capacity
             .then_some(self.pb.data.len() - (self.pb.wr - self.pb.rd));
 
-        #[cfg(feature = "static")]
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
         return Some(self.pb.data.len() - (self.pb.wr - self.pb.rd));
     }
 
