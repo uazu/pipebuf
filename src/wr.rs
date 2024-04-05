@@ -117,6 +117,7 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
         // Caller guarantees that if .rd == .wr, then now both .rd and
         // .wr will be zero, so if .rd > 0 then there is something to
         // copy down
+        debug_assert!(self.pb.rd != self.pb.wr || self.pb.rd == 0);
         if self.pb.rd > 0 {
             self.pb.data.copy_within(self.pb.rd..self.pb.wr, 0);
             self.pb.wr -= self.pb.rd;
