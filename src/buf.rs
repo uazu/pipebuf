@@ -16,11 +16,11 @@ use std::io::{ErrorKind, Read, Write};
 /// from the buffer.  These are the references that should be passed
 /// to component code.  See this crate's top-level documentation for
 /// further discussion of how this works.
-pub struct PipeBuf {
+pub struct PipeBuf<T: 'static = u8> {
     #[cfg(any(feature = "alloc", feature = "std"))]
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: Vec<T>,
     #[cfg(not(any(feature = "alloc", feature = "std")))]
-    pub(crate) data: &'static mut [u8],
+    pub(crate) data: &'static mut [T],
     pub(crate) rd: usize,
     pub(crate) wr: usize,
     pub(crate) state: PBufState,
@@ -28,7 +28,7 @@ pub struct PipeBuf {
     pub(crate) fixed_capacity: bool,
 }
 
-impl PipeBuf {
+impl<T: Copy + Default + 'static> PipeBuf<T> {
     /// Create a new empty pipe buffer
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
@@ -51,7 +51,7 @@ impl PipeBuf {
     #[inline]
     pub fn with_capacity(cap: usize) -> Self {
         Self {
-            data: vec![0; cap],
+            data: vec![T::default(); cap],
             rd: 0,
             wr: 0,
             state: PBufState::Open,
@@ -69,7 +69,7 @@ impl PipeBuf {
     #[inline]
     pub fn with_fixed_capacity(cap: usize) -> Self {
         Self {
-            data: vec![0; cap],
+            data: vec![T::default(); cap],
             rd: 0,
             wr: 0,
             state: PBufState::Open,
@@ -91,7 +91,7 @@ impl PipeBuf {
     #[cfg(feature = "static")]
     #[cfg_attr(docsrs, doc(cfg(feature = "static")))]
     #[inline]
-    pub fn new_static(buffer: &'static mut [u8]) -> Self {
+    pub fn new_static(buffer: &'static mut [T]) -> Self {
         Self {
             data: buffer,
             rd: 0,
@@ -118,7 +118,7 @@ impl PipeBuf {
     /// between different parts of the codebase.
     #[inline]
     pub fn reset_and_zero(&mut self) {
-        self.data[..].fill(0);
+        self.data[..].fill(T::default());
         self.rd = 0;
         self.wr = 0;
         self.state = PBufState::Open;
@@ -126,13 +126,13 @@ impl PipeBuf {
 
     /// Get a consumer reference to the buffer
     #[inline(always)]
-    pub fn rd(&mut self) -> PBufRd<'_> {
+    pub fn rd(&mut self) -> PBufRd<'_, T> {
         PBufRd { pb: self }
     }
 
     /// Get a producer reference to the buffer
     #[inline(always)]
-    pub fn wr(&mut self) -> PBufWr<'_> {
+    pub fn wr(&mut self) -> PBufWr<'_, T> {
         PBufWr { pb: self }
     }
 
@@ -203,7 +203,7 @@ impl PipeBuf {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl Read for PipeBuf {
+impl Read for PipeBuf<u8> {
     /// Read data from the pipe-buffer, as much as is available.  The
     /// following returns are possible:
     ///
@@ -233,7 +233,7 @@ impl Read for PipeBuf {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl Write for PipeBuf {
+impl Write for PipeBuf<u8> {
     /// Write data to the pipe-buffer.  Never returns an error.  For
     /// variable-capacity, always succeeds.  For fixed-capacity may
     /// panic in case more data is written than there is space
@@ -257,7 +257,7 @@ impl Write for PipeBuf {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-impl Default for PipeBuf {
+impl<T: Copy + Default + 'static> Default for PipeBuf<T> {
     fn default() -> Self {
         Self::new()
     }

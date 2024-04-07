@@ -11,18 +11,18 @@ use std::io::{ErrorKind, Read};
 /// the same size and efficiency.  However unlike a `&mut` reference,
 /// reborrowing doesn't happen automatically, but it can still be done
 /// just as efficiently using [`PBufWr::reborrow`].
-pub struct PBufWr<'a> {
-    pub(crate) pb: &'a mut PipeBuf,
+pub struct PBufWr<'a, T: 'static = u8> {
+    pub(crate) pb: &'a mut PipeBuf<T>,
 }
 
-impl<'a> PBufWr<'a> {
+impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     /// Create a new reference from this one, reborrowing it.  Thanks
     /// to the borrow checker, the original reference will be
     /// inaccessible until the returned reference's lifetime ends.
     /// The cost is just a pointer copy, just as for automatic `&mut`
     /// reborrowing.
     #[inline(always)]
-    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufWr<'b>
+    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufWr<'b, T>
     where
         'a: 'b,
         'r: 'b,
@@ -71,26 +71,53 @@ impl<'a> PBufWr<'a> {
     /// number of bytes.
     #[inline]
     #[track_caller]
-    pub fn space(&mut self, reserve: usize) -> &mut [u8] {
+    pub fn space(&mut self, reserve: usize) -> &mut [T] {
+        self.maybe_space(reserve)
+            .expect("Not enough space available in fixed-capacity PipeBuf")
+    }
+
+    /// Get a reference to a mutable slice of `reserve` bytes of free
+    /// space where new data may be written.  Once written, the data
+    /// must be committed immediately using [`PBufWr::commit`], before
+    /// any other operation that might compact the buffer.
+    ///
+    /// Note that for efficiency the free space will not be
+    /// initialised to zeros.  It will contain some jumble of bytes
+    /// previously written to the pipe.  You must not make any
+    /// assumptions about this data.
+    ///
+    /// Returns None if there is not enough free space available in a
+    /// fixed-capacity [`PipeBuf`].
+    #[inline]
+    #[track_caller]
+    pub fn maybe_space(&mut self, reserve: usize) -> Option<&mut [T]> {
         if self.pb.rd == self.pb.wr {
             self.pb.rd = 0;
             self.pb.wr = 0;
         }
 
-        if self.pb.wr + reserve > self.pb.data.len() {
-            self.make_space(reserve);
-        }
+        self.ensure_space(reserve)
+            .then(|| &mut self.pb.data[self.pb.wr..self.pb.wr + reserve])
+    }
 
-        &mut self.pb.data[self.pb.wr..self.pb.wr + reserve]
+    #[inline]
+    #[track_caller]
+    fn ensure_space(&mut self, reserve: usize) -> bool {
+        if self.pb.wr + reserve <= self.pb.data.len() {
+            true
+        } else {
+            self.make_space(reserve)
+        }
     }
 
     #[inline(never)]
     #[cold]
     #[track_caller]
-    fn make_space(&mut self, _reserve: usize) {
+    fn make_space(&mut self, _reserve: usize) -> bool {
         // Caller guarantees that if .rd == .wr, then now both .rd and
         // .wr will be zero, so if .rd > 0 then there is something to
         // copy down
+        debug_assert!(self.pb.rd != self.pb.wr || self.pb.rd == 0);
         if self.pb.rd > 0 {
             self.pb.data.copy_within(self.pb.rd..self.pb.wr, 0);
             self.pb.wr -= self.pb.rd;
@@ -100,17 +127,18 @@ impl<'a> PBufWr<'a> {
         #[cfg(any(feature = "std", feature = "alloc"))]
         if self.pb.wr + _reserve > self.pb.data.len() {
             if self.pb.fixed_capacity {
-                panic!("Not enough space available in fixed-capacity PipeBuf");
+                return false;
             }
             let cap = (self.pb.wr + _reserve).max(_reserve * 2);
             self.pb.data.reserve(cap - self.pb.data.len());
-            self.pb.data.resize(self.pb.data.capacity(), 0);
+            self.pb.data.resize(self.pb.data.capacity(), T::default());
         }
 
         #[cfg(feature = "static")]
         if self.pb.wr + _reserve > self.pb.data.len() {
-            panic!("Not enough space available in fixed-capacity PipeBuf");
+            return false;
         }
+        true
     }
 
     /// Commit the given number of bytes to the pipe buffer.  This
@@ -136,6 +164,23 @@ impl<'a> PBufWr<'a> {
         self.pb.wr = wr;
     }
 
+    /// Return the amount of free space left in the underlying [`PipeBuf`],
+    /// if the capacity is fixed, otherwise None. This can be used as part
+    /// of a backpressure-aware processing step, by only consuming
+    /// sufficient data to create [`PBufWr::free_space`] elements of
+    /// output.
+    #[inline]
+    pub fn free_space(&self) -> Option<usize> {
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        return self
+            .pb
+            .fixed_capacity
+            .then_some(self.pb.data.len() - (self.pb.wr - self.pb.rd));
+
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        return Some(self.pb.data.len() - (self.pb.wr - self.pb.rd));
+    }
+
     /// Set the "push" state on the buffer, which the consumer may use
     /// to decide whether or not to flush data immediately.
     #[inline]
@@ -154,7 +199,7 @@ impl<'a> PBufWr<'a> {
     /// [`PBufWr::space`].
     #[inline]
     #[track_caller]
-    pub fn append(&mut self, data: &[u8]) {
+    pub fn append(&mut self, data: &[T]) {
         let len = data.len();
         self.space(len).copy_from_slice(data);
         self.commit(len);
@@ -228,7 +273,7 @@ impl<'a> PBufWr<'a> {
     pub fn write_with<E>(
         &mut self,
         reserve: usize,
-        mut cb: impl FnMut(&mut [u8]) -> Result<usize, E>,
+        mut cb: impl FnMut(&mut [T]) -> Result<usize, E>,
     ) -> Result<usize, E> {
         let len = cb(self.space(reserve))?;
         self.commit(len);
@@ -258,7 +303,7 @@ impl<'a> PBufWr<'a> {
     pub fn write_with_noerr(
         &mut self,
         reserve: usize,
-        mut cb: impl FnMut(&mut [u8]) -> usize,
+        mut cb: impl FnMut(&mut [T]) -> usize,
     ) -> usize {
         let len = cb(self.space(reserve));
         self.commit(len);
@@ -277,7 +322,9 @@ impl<'a> PBufWr<'a> {
     pub fn exceeds_limit(&self, limit: usize) -> bool {
         (self.pb.wr - self.pb.rd) > limit
     }
+}
 
+impl<'a> PBufWr<'a, u8> {
     /// Input data from the given `Read` implementation, up to the
     /// given length.  If EOF is indicated by the `Read` source
     /// through an `Ok(0)` return, then a normal
@@ -319,7 +366,7 @@ impl<'a> PBufWr<'a> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<'a> std::io::Write for PBufWr<'a> {
+impl<'a> std::io::Write for PBufWr<'a, u8> {
     /// Write data to the pipe-buffer
     fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         self.pb.write(data)

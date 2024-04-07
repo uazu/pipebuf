@@ -14,14 +14,14 @@ use super::{PBufRd, PBufTrip, PBufWr, PipeBuf};
 /// upper/lower is the most helpful terminology, but left/right is
 /// offered as an alternative.
 ///
-pub struct PipeBufPair {
+pub struct PipeBufPair<T: 'static = u8> {
     /// Downwards-flowing pipe
-    pub down: PipeBuf,
+    pub down: PipeBuf<T>,
     /// Upwards-flowing pipe
-    pub up: PipeBuf,
+    pub up: PipeBuf<T>,
 }
 
-impl PipeBufPair {
+impl<T: Copy + Default + 'static> PipeBufPair<T> {
     /// Create a new empty bidirectional pipe
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
@@ -67,7 +67,7 @@ impl PipeBufPair {
     #[cfg(feature = "static")]
     #[cfg_attr(docsrs, doc(cfg(feature = "static")))]
     #[inline]
-    pub fn new_static(down_buf: &'static mut [u8], up_buf: &'static mut [u8]) -> Self {
+    pub fn new_static(down_buf: &'static mut [T], up_buf: &'static mut [T]) -> Self {
         Self {
             down: PipeBuf::new_static(down_buf),
             up: PipeBuf::new_static(up_buf),
@@ -77,7 +77,7 @@ impl PipeBufPair {
     /// Get the references for reading and writing the stream from the
     /// "upper" end
     #[inline]
-    pub fn upper(&mut self) -> PBufRdWr<'_> {
+    pub fn upper(&mut self) -> PBufRdWr<'_, T> {
         PBufRdWr {
             rd: self.up.rd(),
             wr: self.down.wr(),
@@ -87,7 +87,7 @@ impl PipeBufPair {
     /// Get the references for reading and writing the stream from the
     /// "lower" end
     #[inline]
-    pub fn lower(&mut self) -> PBufRdWr<'_> {
+    pub fn lower(&mut self) -> PBufRdWr<'_, T> {
         PBufRdWr {
             rd: self.down.rd(),
             wr: self.up.wr(),
@@ -99,7 +99,7 @@ impl PipeBufPair {
     /// readable, and actually this is the same as
     /// [`PipeBufPair::upper`].
     #[inline]
-    pub fn left(&mut self) -> PBufRdWr<'_> {
+    pub fn left(&mut self) -> PBufRdWr<'_, T> {
         self.upper()
     }
 
@@ -108,7 +108,7 @@ impl PipeBufPair {
     /// readable, and actually this is the same as
     /// [`PipeBufPair::lower`].
     #[inline]
-    pub fn right(&mut self) -> PBufRdWr<'_> {
+    pub fn right(&mut self) -> PBufRdWr<'_, T> {
         self.lower()
     }
 
@@ -134,7 +134,7 @@ impl PipeBufPair {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-impl Default for PipeBufPair {
+impl<T: Copy + Default + 'static> Default for PipeBufPair<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -147,21 +147,21 @@ impl Default for PipeBufPair {
 /// [`PipeBufPair::left`] and [`PipeBufPair::right`].  Reborrow it
 /// using [`PBufRdWr::reborrow`], or by reborrowing the members
 /// individually.
-pub struct PBufRdWr<'a> {
+pub struct PBufRdWr<'a, T: 'static = u8> {
     /// Consumer reference for the incoming pipe
-    pub rd: PBufRd<'a>,
+    pub rd: PBufRd<'a, T>,
     /// Producer reference for the outgoing pipe
-    pub wr: PBufWr<'a>,
+    pub wr: PBufWr<'a, T>,
 }
 
-impl<'a> PBufRdWr<'a> {
+impl<'a, T: Copy + Default + 'static> PBufRdWr<'a, T> {
     /// Create new references from these, reborrowing them.  Thanks to
     /// the borrow checker, the original references will be
     /// inaccessible until the returned references' lifetimes end.
     /// The cost is just a couple of pointer copies, just as for
     /// `&mut` reborrowing.
     #[inline(always)]
-    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufRdWr<'b>
+    pub fn reborrow<'b, 'r>(&'r mut self) -> PBufRdWr<'b, T>
     where
         'a: 'b,
         'r: 'b,
