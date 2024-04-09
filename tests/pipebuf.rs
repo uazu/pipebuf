@@ -15,7 +15,7 @@ use pipebuf::{PBufRd, PBufWr, PipeBuf, PipeBufPair};
 macro_rules! fixed_capacity_pipebuf {
     ($size:expr) => {{
         #[cfg(any(feature = "std", feature = "alloc"))]
-        let p = PipeBuf::with_fixed_capacity($size);
+        let p = PipeBuf::<u8>::with_fixed_capacity($size);
         #[cfg(feature = "static")]
         let p = {
             static mut BUF: [u8; $size] = [0; $size];
@@ -251,7 +251,7 @@ fn states() {
 #[test]
 #[should_panic]
 fn no_space() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     // Note that capacity won't be exactly 10 since `Vec` rounds up,
     // so testing 11 or so on won't work.
     p.wr().space(100);
@@ -259,9 +259,19 @@ fn no_space() {
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
+fn no_space_try() {
+    let mut p = fixed_capacity_pipebuf!(10);
+    assert!(p.wr().free_space().unwrap() >= 10);
+    // Note that capacity won't be exactly 10 since `Vec` rounds up,
+    // so testing 11 or so on won't work.
+    assert!(p.wr().try_space(100).is_none());
+}
+
+#[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
+#[test]
 #[should_panic]
 fn commit_overflow() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     // Note that capacity won't be exactly 10 since `Vec` rounds up,
     // so testing 11 or so on won't work.
     p.wr().commit(100);
@@ -271,7 +281,7 @@ fn commit_overflow() {
 #[test]
 #[should_panic]
 fn consume_overflow() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     p.rd().consume(1);
 }
 
@@ -279,7 +289,7 @@ fn consume_overflow() {
 #[test]
 #[should_panic]
 fn commit_after_close() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     p.wr().close();
     p.wr().commit(1);
 }
@@ -288,7 +298,7 @@ fn commit_after_close() {
 #[test]
 #[should_panic]
 fn commit_after_abort() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     p.wr().abort();
     p.wr().commit(1);
 }
@@ -297,7 +307,7 @@ fn commit_after_abort() {
 #[test]
 #[should_panic]
 fn close_after_close() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     p.wr().close();
     p.wr().close();
 }
@@ -306,7 +316,7 @@ fn close_after_close() {
 #[test]
 #[should_panic]
 fn close_after_abort() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     p.wr().abort();
     p.wr().close();
 }
@@ -315,7 +325,7 @@ fn close_after_abort() {
 #[test]
 #[should_panic]
 fn abort_after_close() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     p.wr().close();
     p.wr().abort();
 }
@@ -324,7 +334,7 @@ fn abort_after_close() {
 #[test]
 #[should_panic]
 fn abort_after_abort() {
-    let mut p: PipeBuf<u8> = fixed_capacity_pipebuf!(10);
+    let mut p = fixed_capacity_pipebuf!(10);
     p.wr().abort();
     p.wr().abort();
 }
@@ -337,6 +347,7 @@ fn reset_and_zero() {
     assert_eq!(b"0123456789", p.rd().data());
     p.reset_and_zero();
     assert_eq!([0; 10], p.wr().space(10));
+    assert_eq!([0; 10], p.wr().try_space(10).unwrap());
     assert_eq!(0, p.rd().len());
 }
 
@@ -344,9 +355,51 @@ fn reset_and_zero() {
 #[test]
 fn with_capacity() {
     let mut p = PipeBuf::with_capacity(10);
+    assert!(p.wr().free_space().is_none());
     p.wr().append(b"0123456789");
     p.wr().append(b"ABCDEFGHIJ");
     assert_eq!(b"0123456789ABCDEFGHIJ", p.rd().data());
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[test]
+fn create_with_new() {
+    let mut p = PipeBuf::new();
+    assert!(p.wr().free_space().is_none());
+    p.wr().try_space(23).unwrap()[..10].copy_from_slice(b"0123456789");
+    p.wr().commit(10);
+    p.wr().space(17)[..10].copy_from_slice(b"ABCDEFGHIJ");
+    p.wr().commit(10);
+    assert_eq!(b"0123456789ABCDEFGHIJ", p.rd().data());
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[test]
+fn create_with_new_u16() {
+    let mut p = PipeBuf::<u16>::new();
+    p.wr().try_space(13).unwrap()[..5].copy_from_slice(&[0, 1, 2, 3, 4]);
+    p.wr().commit(5);
+    p.wr().space(9)[..7].copy_from_slice(&[5, 6, 7, 8, 9, 10, 11]);
+    p.wr().commit(7);
+    assert_eq!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], p.rd().data());
+    p.rd().consume(6);
+    assert_eq!([6, 7, 8, 9, 10, 11], p.rd().data());
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[test]
+fn create_with_new_char() {
+    let mut p = PipeBuf::<char>::new();
+    p.wr().try_space(13).unwrap()[..5].copy_from_slice(&['0', '1', '2', '3', '4']);
+    p.wr().commit(5);
+    p.wr().space(9)[..7].copy_from_slice(&['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+    p.wr().commit(7);
+    assert_eq!(
+        ['0', '1', '2', '3', '4', 'a', 'b', 'c', 'd', 'e', 'f', 'g'],
+        p.rd().data()
+    );
+    p.rd().consume(6);
+    assert_eq!(['b', 'c', 'd', 'e', 'f', 'g'], p.rd().data());
 }
 
 /// Test that buffer shifts down properly when there is both unread

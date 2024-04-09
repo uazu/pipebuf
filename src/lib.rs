@@ -54,6 +54,12 @@
 //! protocols) or a partial block (if the data is being consumed in
 //! blocks or chunks).
 //!
+//! Note that this crate is generic on the contained "byte" data type,
+//! which defaults to `u8` and so doesn't normally need to be
+//! specified.  So read `T` as `u8` in this documentation.  See [notes
+//! below](#using-this-crate-with-a-type-other-than-u8) about using
+//! this crate with a different contained data type.
+//!
 //! # Bidirectional streams
 //!
 //! [`PipeBufPair`] puts two pipe-buffers together to make a
@@ -389,6 +395,19 @@
 //! would be inefficient because when doing I/O you'd have to reserve
 //! space by writing zeros and then afterwards rewind to the actual
 //! length read, since I/O calls require a mutable slice to write to.
+//!
+//! # Using this crate with a type other than `u8`
+//!
+//! This crate is optimised for handling byte-streams.  However it's
+//! possible that small types other than `u8` may be of use, so it
+//! accepts an optional generic argument for the contained type.  For
+//! example `u16` may be useful if the data being passed is UTF-16, or
+//! `char` for Unicode codepoints.  In general this crate is useful
+//! where parsing code needs to see all the available data and may
+//! consume a variable quantity of it depending on what it sees.  If
+//! you only need to consume one item at a time then `VecDeque` from
+//! `std` is preferable because it is a ring buffer so doesn't need to
+//! copy data down from time to time to compress the buffer.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

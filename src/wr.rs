@@ -72,8 +72,16 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     #[inline]
     #[track_caller]
     pub fn space(&mut self, reserve: usize) -> &mut [T] {
-        self.maybe_space(reserve)
-            .expect("Not enough space available in fixed-capacity PipeBuf")
+        if self.pb.rd == self.pb.wr {
+            self.pb.rd = 0;
+            self.pb.wr = 0;
+        }
+
+        if self.pb.wr + reserve > self.pb.data.len() {
+            self.make_space(reserve);
+        }
+
+        &mut self.pb.data[self.pb.wr..self.pb.wr + reserve]
     }
 
     /// Get a reference to a mutable slice of `reserve` bytes of free
@@ -86,34 +94,45 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     /// previously written to the pipe.  You must not make any
     /// assumptions about this data.
     ///
-    /// Returns None if there is not enough free space available in a
-    /// fixed-capacity [`PipeBuf`].
+    /// Returns `None` if there is not enough free space available in
+    /// a fixed-capacity [`PipeBuf`].
     #[inline]
     #[track_caller]
-    pub fn maybe_space(&mut self, reserve: usize) -> Option<&mut [T]> {
+    pub fn try_space(&mut self, reserve: usize) -> Option<&mut [T]> {
         if self.pb.rd == self.pb.wr {
             self.pb.rd = 0;
             self.pb.wr = 0;
         }
 
-        self.ensure_space(reserve)
-            .then(|| &mut self.pb.data[self.pb.wr..self.pb.wr + reserve])
+        if self.pb.wr + reserve > self.pb.data.len() && !self.try_make_space(reserve) {
+            None
+        } else {
+            Some(&mut self.pb.data[self.pb.wr..self.pb.wr + reserve])
+        }
     }
 
-    #[inline]
+    // `make_space` and `try_make_space` are "cold" and not inlined
+    // into the caller's code as they are expected to be called rarely
+    // once the buffers have grown to an adequate size.  This is done
+    // to keep the actual inlined code small and efficient.
+    #[inline(never)]
+    #[cold]
     #[track_caller]
-    fn ensure_space(&mut self, reserve: usize) -> bool {
-        if self.pb.wr + reserve <= self.pb.data.len() {
-            true
-        } else {
-            self.make_space(reserve)
+    fn make_space(&mut self, reserve: usize) {
+        if !self.make_space_aux(reserve) {
+            panic!("Not enough space available in fixed-capacity PipeBuf");
         }
     }
 
     #[inline(never)]
     #[cold]
     #[track_caller]
-    fn make_space(&mut self, _reserve: usize) -> bool {
+    fn try_make_space(&mut self, reserve: usize) -> bool {
+        self.make_space_aux(reserve)
+    }
+
+    #[inline(always)]
+    fn make_space_aux(&mut self, _reserve: usize) -> bool {
         // Caller guarantees that if .rd == .wr, then now both .rd and
         // .wr will be zero, so if .rd > 0 then there is something to
         // copy down
@@ -142,8 +161,9 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     }
 
     /// Commit the given number of bytes to the pipe buffer.  This
-    /// data should have been written to the slice returned by the
-    /// [`PBufWr::space`] method just before this call.
+    /// data should have been written to the start of the slice
+    /// returned by the [`PBufWr::space`] or [`PBufWr::try_space`]
+    /// method just before this call.
     ///
     /// # Panics
     ///
@@ -164,11 +184,11 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
         self.pb.wr = wr;
     }
 
-    /// Return the amount of free space left in the underlying [`PipeBuf`],
-    /// if the capacity is fixed, otherwise None. This can be used as part
-    /// of a backpressure-aware processing step, by only consuming
-    /// sufficient data to create [`PBufWr::free_space`] elements of
-    /// output.
+    /// Return the amount of free space left in the underlying
+    /// [`PipeBuf`] if the capacity is fixed, otherwise `None`.  This
+    /// can be used as part of a backpressure-aware processing step by
+    /// only consuming sufficient data to create
+    /// [`PBufWr::free_space`] elements of output.
     #[inline]
     pub fn free_space(&self) -> Option<usize> {
         #[cfg(any(feature = "std", feature = "alloc"))]

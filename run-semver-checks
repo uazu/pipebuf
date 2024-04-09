@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Install cargo-semver-checks first
+
+if [ -z "$1" ]
+then
+    COMMAND="cargo semver-checks"
+else
+    COMMAND="cargo semver-checks --baseline-rev $1"
+fi
+
+./run-feature-combinations | while read FEATURES
+do
+    echo === $FEATURES
+
+    $COMMAND --only-explicit-features --features "$FEATURES" || exit 1
+done
