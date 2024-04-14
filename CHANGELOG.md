@@ -4,6 +4,12 @@ This project follows Rust semantic versioning.
 
 <!-- see keepachangelog.com for format ideas -->
 
+## 0.3.1 (2024-04-14)
+
+### Added
+
+- `PBufRd::data_mut` to support Rustls unbuffered interface
+
 ## 0.3.0 (2024-04-09)
 
 ### Added

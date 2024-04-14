@@ -185,9 +185,34 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     }
 
     /// Return the amount of free space left in the underlying
-    /// [`PipeBuf`] if the capacity is fixed, otherwise `None`.  This
-    /// can be used as part of a backpressure-aware processing step by
-    /// only consuming sufficient data to create
+    /// [`PipeBuf`] if the capacity is fixed, otherwise `None`.
+    ///
+    /// Note that in the `PipeBuf` model backpressure is intended to
+    /// be handled by the glue code, and in the case of fixed-sized
+    /// buffers, they should be sized ahead of time adequately for the
+    /// expected data flowing through the chain.  So if only 1000
+    /// bytes of data will be consumed at a time, then by calculating
+    /// the maximum amount of data that could result from processing
+    /// that 1000 bytes of data you could size all the buffers
+    /// accordingly in the glue code.  So in that case components
+    /// don't need to worry about backpressure and [`PBufWr::space`]
+    /// can be used directly without any checks.  A panic from
+    /// [`PBufWr::space`] would only indicate that the glue code
+    /// author had made an error in the sizing calculations.
+    /// Component code authors could give guidance about buffer sizing
+    /// in the documentation.  So this call would not be required in
+    /// that case.
+    ///
+    /// However in the case of something like decompression where a
+    /// small amount of input data may result in a huge amount of data
+    /// being output, the glue code will need some help.  In that case
+    /// the decompressor may output to a fixed-size pipe buffer and
+    /// use this call to see how much space is available for output.
+    /// The glue code may need to run the downstream chain repeatedly
+    /// until the decompressor has caught up.
+    ///
+    /// So this call can be used as part of a backpressure-aware
+    /// processing step by only consuming sufficient data to create
     /// [`PBufWr::free_space`] elements of output.
     #[inline]
     pub fn free_space(&self) -> Option<usize> {

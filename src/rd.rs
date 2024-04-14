@@ -53,6 +53,17 @@ impl<'a, T: Copy + Default + 'static> PBufRd<'a, T> {
         &self.pb.data[self.pb.rd..self.pb.wr]
     }
 
+    /// Get a mutable reference to a slice of bytes representing the
+    /// current contents of the buffer.  A mutable slice may be useful
+    /// if the consuming code needs to modify the data in place during
+    /// its processing.  If the consuming code is able to process any
+    /// data, it should do so, and then indicate how many bytes have
+    /// been consumed using [`PBufRd::consume`].
+    #[inline(always)]
+    pub fn data_mut(&mut self) -> &mut [T] {
+        &mut self.pb.data[self.pb.rd..self.pb.wr]
+    }
+
     /// Indicate that `len` bytes should be marked as consumed from
     /// the start of the buffer.  They will be discarded and will no
     /// longer be visible through this interface.

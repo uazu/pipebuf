@@ -60,6 +60,10 @@
 //! below](#using-this-crate-with-a-type-other-than-u8) about using
 //! this crate with a different contained data type.
 //!
+//! If it is not clear how to apply this crate to a particular
+//! situation, please open a [Discussion
+//! item](https://github.com/uazu/pipebuf/discussions).
+//!
 //! # Bidirectional streams
 //!
 //! [`PipeBufPair`] puts two pipe-buffers together to make a
@@ -235,12 +239,31 @@
 //! to stop running it.  Typically this means checking
 //! [`PipeBuf::is_done`] on the externally-visible outputs.
 //!
+//! # Backpressure
+//!
+//! The model here is that backpressure is handled by the glue code,
+//! and that in general the components can act as if there is
+//! sufficient space in their output buffers, even in the case of
+//! fixed-size buffers.  It is assumed that everything has been sized
+//! appropriately ahead of time.  So the glue code needs to check that
+//! the outputs are able to accept data before accepting input data
+//! and running it through the chain or network of components.
+//!
+//! However in the case of components that don't output a predictable
+//! amount of data given a certain number of input bytes (for example
+//! decompression), that component may need to be given fixed-size
+//! output buffer to limit its output, and it needs to check how much
+//! free space it has available.  Calls like [`PBufWr::free_space`]
+//! and [`PBufWr::try_space`] support that case.  The glue code may
+//! need to run the downstream chain repeatedly until the decompressor
+//! has caught up.
+//!
 //! # Safety and efficiency
 //!
-//! This crate is compiled with `#[forbid(unsafe)]` so it is sound in
-//! a Rust sense, and it has 99% test coverage.  The use of [`PBufRd`]
-//! and [`PBufWr`] references means that the consumer can only do
-//! consumer operations, and the producer can only do producer
+//! This crate is compiled with `#[forbid(unsafe_code)]` so it is
+//! sound in a Rust sense, and it has 99% test coverage.  The use of
+//! [`PBufRd`] and [`PBufWr`] references means that the consumer can
+//! only do consumer operations, and the producer can only do producer
 //! operations.  These reference types cost no more than a `&mut
 //! PipeBuf`, so this protection is for free.  In addition most
 //! operations on the [`PipeBuf`] generate very little code and can be
