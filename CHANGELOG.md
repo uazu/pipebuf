@@ -4,11 +4,20 @@ This project follows Rust semantic versioning.
 
 <!-- see keepachangelog.com for format ideas -->
 
+## 0.3.2 (2024-07-01)
+
+### Changed
+
+- `PBufWr::close` and `PBufWr::abort` no longer panic if the stream is
+  already closed
+
+
 ## 0.3.1 (2024-04-14)
 
 ### Added
 
 - `PBufRd::data_mut` to support Rustls unbuffered interface
+
 
 ## 0.3.0 (2024-04-09)
 

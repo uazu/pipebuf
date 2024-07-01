@@ -263,15 +263,13 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     /// state [`PBufState::Closing`].  There may still be unread data
     /// in the buffer, but that is the final data before the EOF.
     ///
-    /// # Panics
-    ///
-    /// Panics if end-of-file has already been indicated on this
-    /// buffer
+    /// If the stream is already closed or aborted then ignores this
+    /// call.  This makes certain component handling less error-prone.
     #[inline]
     #[track_caller]
     pub fn close(&mut self) {
         if self.is_eof() {
-            panic_already_closed();
+            return;
         }
         self.pb.state = PBufState::Closing;
     }
@@ -280,15 +278,18 @@ impl<'a, T: Copy + Default + 'static> PBufWr<'a, T> {
     /// kind of failure, where the data may be incomplete.  The pipe
     /// buffer is given the state [`PBufState::Aborting`].
     ///
-    /// # Panics
-    ///
-    /// Panics if end-of-file has already been indicated on this
-    /// buffer
+    /// If the stream is already closed or aborted then ignores this
+    /// call.  This makes certain component handling less error-prone.
+    /// The reason for allowing a close followed by an abort to remain
+    /// as a close is because at the point that the close was
+    /// performed, the code considered that the stream was complete
+    /// and valid.  Also, the `Closing` status may already have been
+    /// observed.
     #[inline]
     #[track_caller]
     pub fn abort(&mut self) {
         if self.is_eof() {
-            panic_already_closed();
+            return;
         }
         self.pb.state = PBufState::Aborting;
     }
@@ -436,10 +437,4 @@ fn panic_closed_pipebuf() -> ! {
 #[track_caller]
 fn panic_commit_overflow() -> ! {
     panic!("Illegal to commit more bytes to a PipeBuf than the reserved space");
-}
-#[inline(never)]
-#[cold]
-#[track_caller]
-fn panic_already_closed() -> ! {
-    panic!("Illegal to close or abort a PipeBuf more than once");
 }

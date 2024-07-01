@@ -18,8 +18,9 @@ macro_rules! fixed_capacity_pipebuf {
         let p = PipeBuf::<u8>::with_fixed_capacity($size);
         #[cfg(feature = "static")]
         let p = {
+            use core::ptr::addr_of_mut;
             static mut BUF: [u8; $size] = [0; $size];
-            PipeBuf::new_static(unsafe { &mut BUF })
+            PipeBuf::new_static(unsafe { &mut *addr_of_mut!(BUF) })
         };
         p
     }};
@@ -32,9 +33,12 @@ macro_rules! fixed_capacity_pipebufpair {
         let p = PipeBufPair::with_fixed_capacities($size, $size);
         #[cfg(feature = "static")]
         let p = {
+            use core::ptr::addr_of_mut;
             static mut BUF0: [u8; $size] = [0; $size];
             static mut BUF1: [u8; $size] = [0; $size];
-            PipeBufPair::new_static(unsafe { &mut BUF0 }, unsafe { &mut BUF1 })
+            PipeBufPair::new_static(unsafe { &mut *addr_of_mut!(BUF0) }, unsafe {
+                &mut *addr_of_mut!(BUF1)
+            })
         };
         p
     }};
@@ -305,38 +309,42 @@ fn commit_after_abort() {
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn close_after_close() {
     let mut p = fixed_capacity_pipebuf!(10);
     p.wr().close();
+    assert_eq!(PBufState::Closing, p.state());
     p.wr().close();
+    assert_eq!(PBufState::Closing, p.state());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn close_after_abort() {
     let mut p = fixed_capacity_pipebuf!(10);
     p.wr().abort();
+    assert_eq!(PBufState::Aborting, p.state());
     p.wr().close();
+    assert_eq!(PBufState::Aborting, p.state());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn abort_after_close() {
     let mut p = fixed_capacity_pipebuf!(10);
     p.wr().close();
+    assert_eq!(PBufState::Closing, p.state());
     p.wr().abort();
+    assert_eq!(PBufState::Closing, p.state());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn abort_after_abort() {
     let mut p = fixed_capacity_pipebuf!(10);
     p.wr().abort();
+    assert_eq!(PBufState::Aborting, p.state());
     p.wr().abort();
+    assert_eq!(PBufState::Aborting, p.state());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]

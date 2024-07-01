@@ -85,8 +85,9 @@ impl<T: Copy + Default + 'static> PipeBuf<T> {
     ///
     /// ```
     ///# use pipebuf::PipeBuf;
+    ///# use core::ptr::addr_of_mut;
     /// static mut BUF: [u8; 1024] = [0; 1024];
-    /// let _ = PipeBuf::new_static(unsafe { &mut BUF });
+    /// let _ = PipeBuf::new_static(unsafe { &mut *addr_of_mut!(BUF) });
     /// ```
     #[cfg(feature = "static")]
     #[cfg_attr(docsrs, doc(cfg(feature = "static")))]

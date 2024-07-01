@@ -1,6 +1,6 @@
 [package]
 name = "pipebuf"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Jim Peters <jim@uazu.net>"]
 
