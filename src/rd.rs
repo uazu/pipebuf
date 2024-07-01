@@ -78,7 +78,12 @@ impl<'a, T: Copy + Default + 'static> PBufRd<'a, T> {
         if rd > self.pb.wr {
             panic_consume_overflow();
         }
-        self.pb.rd = rd;
+        if rd == self.pb.wr {
+            self.pb.rd = 0;
+            self.pb.wr = 0;
+        } else {
+            self.pb.rd = rd;
+        }
     }
 
     /// Get the number of bytes held in the buffer
@@ -90,7 +95,22 @@ impl<'a, T: Copy + Default + 'static> PBufRd<'a, T> {
     /// Test whether the buffer is empty
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.pb.rd == self.pb.wr
+        debug_assert!(self.pb.rd != self.pb.wr || self.pb.wr == 0);
+        self.pb.wr == 0
+    }
+
+    /// Test whether the buffer is completely full, i.e. the data
+    /// length equals the maximum capacity
+    #[inline(always)]
+    pub fn is_full(&self) -> bool {
+        self.pb.capacity() == self.len()
+    }
+
+    /// Get the logical capacity of the buffer, i.e. the maximum
+    /// amount of data which this pipe-buffer can hold
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.pb.capacity()
     }
 
     /// Try to consume a "push" indication from the stream.  Returns
@@ -104,6 +124,12 @@ impl<'a, T: Copy + Default + 'static> PBufRd<'a, T> {
         } else {
             false
         }
+    }
+
+    /// Test whether there is a "push" waiting to be consumed
+    #[inline]
+    pub fn has_pending_push(&self) -> bool {
+        self.pb.state == PBufState::Push
     }
 
     /// Try to consume an EOF indication from the stream.  This
@@ -165,27 +191,30 @@ impl<'a, T: Copy + Default + 'static> PBufRd<'a, T> {
         self.pb.state
     }
 
-    /// Forward all the data found in this pipe to another pipe.  Also
-    /// forwards "push" and EOF indications.
+    /// Forward all the data found in this pipe to another pipe, or as
+    /// much as will fit.  Also forwards "push" and EOF indications if
+    /// all data was transferred.
     pub fn forward(&mut self, mut dest: PBufWr<'_, T>) {
         if dest.is_eof() {
             return;
         }
 
         let data = self.data();
-        let len = data.len();
-        dest.space(len).copy_from_slice(data);
+        let len = data.len().min(dest.free());
+        dest.space(len).unwrap().copy_from_slice(&data[..len]);
         dest.commit(len);
         self.consume(len);
 
-        if self.consume_push() {
-            dest.push();
-        }
-        if self.consume_eof() {
-            if self.is_aborted() {
-                dest.abort();
-            } else {
-                dest.close();
+        if self.is_empty() {
+            if self.consume_push() {
+                dest.push();
+            }
+            if self.consume_eof() {
+                if self.is_aborted() {
+                    dest.abort();
+                } else {
+                    dest.close();
+                }
             }
         }
     }

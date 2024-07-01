@@ -17,64 +17,68 @@ use std::io::{ErrorKind, Read, Write};
 /// to component code.  See this crate's top-level documentation for
 /// further discussion of how this works.
 pub struct PipeBuf<T: 'static = u8> {
+    // Invariants:
+    // assert!(.rd <= .wr)
+    // assert!(.rd < .wr || .wr == 0)  // Both set back to 0 if empty
     #[cfg(any(feature = "alloc", feature = "std"))]
     pub(crate) data: Vec<T>,
     #[cfg(not(any(feature = "alloc", feature = "std")))]
     pub(crate) data: &'static mut [T],
-    pub(crate) rd: usize,
-    pub(crate) wr: usize,
+    pub(crate) rd: usize, // Read offset, or 0 if empty
+    pub(crate) wr: usize, // Write offset, or 0 if empty
     pub(crate) state: PBufState,
     #[cfg(any(feature = "alloc", feature = "std"))]
-    pub(crate) fixed_capacity: bool,
+    pub(crate) max_capacity: usize, // Live logical capacity
 }
 
 impl<T: Copy + Default + 'static> PipeBuf<T> {
-    /// Create a new empty pipe buffer
+    /// Create a new empty pipe buffer with the given minimum and
+    /// maximum capacities.  Both capacities may be rounded up
+    /// according to the allocation strategy of `Vec`, since `PipeBuf`
+    /// uses all the capacity that `Vec` allocates.
+    ///
+    /// - The minimum capacity should be set according to the normal
+    /// expected traffic or load-level, depending on the buffer sizing
+    /// recommendations of the components on either end of the pipe.
+    ///
+    /// - The maximum capacity should be an upper limit that is not
+    /// expected to be exceeded in normal operation.  This is the
+    /// limit that avoids memory-exhaustion denial-of-service attacks
+    /// if someone finds an exploit in the protocols being
+    /// transferred.
+    ///
+    /// Note that some components will always make use of the maximum
+    /// capacity of an output buffer, so in that case the maximum
+    /// capacity represents the approximate unit of work for the
+    /// downstream chain of components.  In that case the minimum
+    /// capacity is not important and [`PipeBuf::fixed`] could be used
+    /// instead.
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[inline]
-    pub fn new() -> Self {
+    pub fn new(min_capacity: usize, max_capacity: usize) -> Self {
+        let data = vec![T::default(); min_capacity];
+        let max_capacity = max_capacity.max(data.capacity());
         Self {
-            data: Vec::new(),
+            data,
             rd: 0,
             wr: 0,
             state: PBufState::Open,
-            fixed_capacity: false,
-        }
-    }
-
-    /// Create a new pipe buffer with the given initial capacity
-    #[cfg(any(feature = "std", feature = "alloc"))]
-    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-    #[inline]
-    pub fn with_capacity(cap: usize) -> Self {
-        Self {
-            data: vec![T::default(); cap],
-            rd: 0,
-            wr: 0,
-            state: PBufState::Open,
-            fixed_capacity: false,
+            max_capacity,
         }
     }
 
     /// Create a new pipe buffer with the given fixed capacity.  The
-    /// buffer will never be reallocated.  If a [`PBufWr::space`] call
-    /// requests more space than is available, then the call will
-    /// panic.
+    /// buffer will never be reallocated.  The actual capacity may be
+    /// greater than the capacity requested, because we make full use
+    /// of the memory that `Vec` allocates, and `Vec` may round up.
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[inline]
-    pub fn with_fixed_capacity(cap: usize) -> Self {
-        Self {
-            data: vec![T::default(); cap],
-            rd: 0,
-            wr: 0,
-            state: PBufState::Open,
-            fixed_capacity: true,
-        }
+    pub fn fixed(capacity: usize) -> Self {
+        Self::new(capacity, capacity)
     }
 
     /// Create a new pipe buffer backed by the given static memory.
@@ -85,8 +89,11 @@ impl<T: Copy + Default + 'static> PipeBuf<T> {
     ///
     /// ```
     ///# use pipebuf::PipeBuf;
+    ///# use core::ptr::addr_of_mut;
+    /// // Safety: No other `&mut` references exist to the global `BUF`
     /// static mut BUF: [u8; 1024] = [0; 1024];
-    /// let _ = PipeBuf::new_static(unsafe { &mut BUF });
+    /// let mut pbuf = PipeBuf::new_static(unsafe { &mut *addr_of_mut!(BUF) });
+    ///# let _ = pbuf;
     /// ```
     #[cfg(feature = "static")]
     #[cfg_attr(docsrs, doc(cfg(feature = "static")))]
@@ -199,6 +206,19 @@ impl<T: Copy + Default + 'static> PipeBuf<T> {
             _ => false,
         }
     }
+
+    /// Get the logical maximum capacity of the buffer, i.e. the
+    /// maximum amount of data which this pipe-buffer can hold.  For
+    /// variable-capacity, this may be the `max_capacity` provided
+    /// when the pipe-buffer was created, or might be a larger number
+    /// if `Vec` has rounded up the capacity.
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        return self.max_capacity;
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        return self.data.len();
+    }
 }
 
 #[cfg(feature = "std")]
@@ -234,17 +254,24 @@ impl Read for PipeBuf<u8> {
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl Write for PipeBuf<u8> {
-    /// Write data to the pipe-buffer.  Never returns an error.  For
-    /// variable-capacity, always succeeds.  For fixed-capacity may
-    /// panic in case more data is written than there is space
-    /// available.
+    /// Write data to the pipe-buffer.  The following returns are
+    /// possible:
+    ///
+    /// - `Ok(len)` with `len > 0`: Some data was written, but not
+    /// necessarily all data
+    ///
+    /// - `Err(e)` with `e.kind() == ErrorKind::WouldBlock`: No space
+    /// available to write right now
     fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         let mut wr = self.wr();
-        let len = data.len();
-        let slice = wr.space(len);
-        slice.copy_from_slice(data);
-        wr.commit(len);
-        Ok(len)
+        let space = wr.space_upto(data.len());
+        let len = space.len();
+        if len > 0 {
+            space.copy_from_slice(&data[..len]);
+            wr.commit(len);
+            return Ok(len);
+        }
+        Err(ErrorKind::WouldBlock.into())
     }
 
     /// Flush sets the "push" state on the [`PipeBuf`]
@@ -254,12 +281,16 @@ impl Write for PipeBuf<u8> {
     }
 }
 
-#[cfg(any(feature = "std", feature = "alloc"))]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-impl<T: Copy + Default + 'static> Default for PipeBuf<T> {
-    fn default() -> Self {
-        Self::new()
+impl<T: Copy + Default + 'static> core::fmt::Debug for PipeBuf<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        let len = self.wr - self.rd;
+        write!(
+            f,
+            "PipeBuf({:?} {}+{})",
+            self.state,
+            len,
+            self.capacity() - len
+        )
     }
 }
 
@@ -302,7 +333,8 @@ pub enum PBufState {
 /// This value is obtained using [`PipeBuf::tripwire`],
 /// [`PBufRd::tripwire`] or [`PBufWr::tripwire`], which all calculate
 /// the same value.  See also the [`tripwire!`] macro which allows
-/// tuples of tripwire values to be created and compared.
+/// tuples of tripwire values to be created and compared.  This is a
+/// very cheap value to generate: just a couple of integer operations.
 ///
 /// The value will change in these cases:
 ///
@@ -334,8 +366,21 @@ pub enum PBufState {
 /// processing has done something.
 ///
 /// [`tripwire!`]: macro.tripwire.html
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub struct PBufTrip(usize);
+
+impl Default for PBufTrip {
+    fn default() -> Self {
+        Self(PBufState::Open as usize)
+    }
+}
+
+impl From<usize> for PBufTrip {
+    /// May be used to generate `PBufTrip` values for other types
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -362,9 +407,9 @@ mod test {
             }};
         }
 
-        p = super::PipeBuf::new();
+        p = super::PipeBuf::new(0, 1024);
         t = p.tripwire();
-        p.wr().append(b"X");
+        assert!(p.wr().append(b"X"));
         assert_inc!();
         p.rd().consume(1);
         assert_dec!();
@@ -378,9 +423,9 @@ mod test {
         assert_dec!();
         let _ = t;
 
-        p = super::PipeBuf::default(); // Same as ::new()
+        p = super::PipeBuf::new(0, 1024);
         t = p.tripwire();
-        p.wr().append(b"X");
+        assert!(p.wr().append(b"X"));
         assert_inc!();
         p.wr().push();
         assert_inc!();

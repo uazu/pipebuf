@@ -6,20 +6,21 @@
 //! usually producer code, consumer code and glue code would be
 //! separate.
 
-use pipebuf::PBufState;
+use pipebuf::{PBufState, RunStatus};
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
-use pipebuf::{PBufRd, PBufWr, PipeBuf, PipeBufPair};
+use pipebuf::{PBufRd, PBufRdWr, PBufTrip, PBufWr, PipeBuf, PipeBufPair};
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 macro_rules! fixed_capacity_pipebuf {
     ($size:expr) => {{
         #[cfg(any(feature = "std", feature = "alloc"))]
-        let p = PipeBuf::<u8>::with_fixed_capacity($size);
+        let p = PipeBuf::<u8>::fixed($size);
         #[cfg(feature = "static")]
         let p = {
+            use core::ptr::addr_of_mut;
             static mut BUF: [u8; $size] = [0; $size];
-            PipeBuf::new_static(unsafe { &mut BUF })
+            PipeBuf::new_static(unsafe { &mut *addr_of_mut!(BUF) })
         };
         p
     }};
@@ -29,12 +30,16 @@ macro_rules! fixed_capacity_pipebuf {
 macro_rules! fixed_capacity_pipebufpair {
     ($size:expr) => {{
         #[cfg(any(feature = "std", feature = "alloc"))]
-        let p = PipeBufPair::with_fixed_capacities($size, $size);
+        let p = PipeBufPair::fixed($size, $size);
         #[cfg(feature = "static")]
         let p = {
+            use core::ptr::addr_of_mut;
             static mut BUF0: [u8; $size] = [0; $size];
             static mut BUF1: [u8; $size] = [0; $size];
-            PipeBufPair::new_static(unsafe { &mut BUF0 }, unsafe { &mut BUF1 })
+            PipeBufPair::new_static(
+                unsafe { &mut *addr_of_mut!(BUF0) }, //
+                unsafe { &mut *addr_of_mut!(BUF1) },
+            )
         };
         p
     }};
@@ -86,34 +91,44 @@ fn states() {
     assert_eq!(false, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Open, p.rd().state());
 
     // Set and clear "push" through set_push()
     p.set_push(true);
+    assert_eq!(true, p.rd().has_pending_push());
     assert_eq!(PBufState::Push, p.state());
     p.set_push(false);
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(PBufState::Open, p.state());
 
     // Add data
-    p.wr().append(b"0");
+    assert!(p.wr().append(b"0"));
     assert_eq!(false, p.rd().is_empty());
     assert_eq!(1, p.rd().len());
     assert_eq!(b'0', p.rd().data()[0]);
+    p.rd().data_mut()[0] = b'1';
+    assert_eq!(b'1', p.rd().data()[0]);
+    p.rd().data_mut()[0] = b'0';
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(false, p.rd().consume_eof());
     assert_eq!(false, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(false, p.rd().is_eof());
     assert_eq!(false, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Open, p.rd().state());
 
     // Add "push" through push(), and consume it
     p.wr().push();
     assert_eq!(PBufState::Push, p.rd().state());
     assert_eq!(true, p.is_push());
+    assert_eq!(true, p.rd().has_pending_push());
     assert_eq!(true, p.rd().consume_push());
     assert_eq!(false, p.is_push());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(PBufState::Open, p.rd().state());
     assert_eq!(false, p.rd().consume_push());
 
@@ -121,8 +136,10 @@ fn states() {
     p.set_push(true);
     assert_eq!(PBufState::Push, p.rd().state());
     assert_eq!(true, p.is_push());
+    assert_eq!(true, p.rd().has_pending_push());
     assert_eq!(true, p.rd().consume_push());
     assert_eq!(false, p.is_push());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(PBufState::Open, p.rd().state());
     assert_eq!(false, p.rd().consume_push());
 
@@ -133,24 +150,28 @@ fn states() {
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(false, p.rd().consume_eof());
     assert_eq!(false, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(false, p.rd().is_eof());
     assert_eq!(false, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Open, p.rd().state());
 
     // Add data
-    p.wr().append(b"12");
+    assert!(p.wr().append(b"12"));
     assert_eq!(false, p.rd().is_empty());
     assert_eq!(2, p.rd().len());
     assert_eq!(b"12", p.rd().data());
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(false, p.rd().consume_eof());
     assert_eq!(false, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(false, p.rd().is_eof());
     assert_eq!(false, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Open, p.rd().state());
 
     // Add normal EOF
@@ -160,10 +181,12 @@ fn states() {
     assert_eq!(b"12", p.rd().data());
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(true, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(true, p.rd().is_eof());
     assert_eq!(true, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Closing, p.rd().state());
 
     // Consume EOF
@@ -173,10 +196,12 @@ fn states() {
     assert_eq!(b"12", p.rd().data());
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(false, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(true, p.rd().is_eof());
     assert_eq!(true, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Closed, p.rd().state());
     assert_eq!(false, p.rd().consume_eof());
 
@@ -187,25 +212,29 @@ fn states() {
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(false, p.rd().consume_eof());
     assert_eq!(false, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(true, p.rd().is_eof());
     assert_eq!(true, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(true, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Closed, p.rd().state());
 
     // Try again, initial state, add data
     p.reset();
-    p.wr().append(b"345");
+    assert!(p.wr().append(b"345"));
     assert_eq!(false, p.rd().is_empty());
     assert_eq!(3, p.rd().len());
     assert_eq!(b"345", p.rd().data());
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(false, p.rd().consume_eof());
     assert_eq!(false, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(false, p.rd().is_eof());
     assert_eq!(false, p.wr().is_eof());
     assert_eq!(false, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Open, p.rd().state());
 
     // Add failure EOF
@@ -215,10 +244,12 @@ fn states() {
     assert_eq!(b"345", p.rd().data());
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(true, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(true, p.rd().is_eof());
     assert_eq!(true, p.wr().is_eof());
     assert_eq!(true, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Aborting, p.rd().state());
 
     // This time consume data first
@@ -227,10 +258,12 @@ fn states() {
     assert_eq!(0, p.rd().len());
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(true, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(true, p.rd().is_eof());
     assert_eq!(true, p.wr().is_eof());
     assert_eq!(true, p.rd().is_aborted());
     assert_eq!(false, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Aborting, p.rd().state());
 
     // Consume EOF
@@ -240,31 +273,45 @@ fn states() {
     assert_eq!(false, p.rd().consume_push());
     assert_eq!(false, p.rd().consume_eof());
     assert_eq!(false, p.rd().has_pending_eof());
+    assert_eq!(false, p.rd().has_pending_push());
     assert_eq!(true, p.rd().is_eof());
     assert_eq!(true, p.wr().is_eof());
     assert_eq!(true, p.rd().is_aborted());
     assert_eq!(true, p.rd().is_done());
+    assert_eq!(false, p.rd().is_full());
     assert_eq!(PBufState::Aborted, p.rd().state());
+
+    // Try filling buffer completely
+    p.reset();
+    assert_eq!(false, p.rd().is_full());
+    while p.wr().append(b"0") {}
+    assert_eq!(true, p.rd().is_full());
+    assert_eq!(p.rd().capacity(), p.rd().data().len());
+    assert_eq!(0, p.wr().free());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn no_space() {
     let mut p = fixed_capacity_pipebuf!(10);
+    assert!(p.wr().free() >= 10);
     // Note that capacity won't be exactly 10 since `Vec` rounds up,
     // so testing 11 or so on won't work.
-    p.wr().space(100);
+    assert!(p.wr().space(100).is_none());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-fn no_space_try() {
+fn partial_space() {
     let mut p = fixed_capacity_pipebuf!(10);
-    assert!(p.wr().free_space().unwrap() >= 10);
+    assert!(p.wr().free() >= 10);
     // Note that capacity won't be exactly 10 since `Vec` rounds up,
     // so testing 11 or so on won't work.
-    assert!(p.wr().try_space(100).is_none());
+    let len = p.wr().space_upto(5).len();
+    assert!(len == 5); // Expect to get it all
+    let len = p.wr().space_upto(100).len();
+    assert!(len < 100); // Expect not to get entire request
+    assert!(len > 0); // But to get something
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
@@ -305,70 +352,65 @@ fn commit_after_abort() {
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn close_after_close() {
     let mut p = fixed_capacity_pipebuf!(10);
-    p.wr().close();
-    p.wr().close();
+    assert_eq!(true, p.wr().close());
+    assert_eq!(false, p.wr().close());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn close_after_abort() {
     let mut p = fixed_capacity_pipebuf!(10);
-    p.wr().abort();
-    p.wr().close();
+    assert_eq!(true, p.wr().abort());
+    assert_eq!(false, p.wr().close());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn abort_after_close() {
     let mut p = fixed_capacity_pipebuf!(10);
-    p.wr().close();
-    p.wr().abort();
+    assert_eq!(true, p.wr().close());
+    assert_eq!(false, p.wr().abort());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
-#[should_panic]
 fn abort_after_abort() {
     let mut p = fixed_capacity_pipebuf!(10);
-    p.wr().abort();
-    p.wr().abort();
+    assert_eq!(true, p.wr().abort());
+    assert_eq!(false, p.wr().abort());
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
 #[test]
 fn reset_and_zero() {
     let mut p = fixed_capacity_pipebuf!(10);
-    p.wr().append(b"0123456789");
+    assert!(p.wr().append(b"0123456789"));
     assert_eq!(b"0123456789", p.rd().data());
     p.reset_and_zero();
-    assert_eq!([0; 10], p.wr().space(10));
-    assert_eq!([0; 10], p.wr().try_space(10).unwrap());
+    assert_eq!([0; 10], p.wr().space(10).unwrap());
     assert_eq!(0, p.rd().len());
 }
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[test]
 fn with_capacity() {
-    let mut p = PipeBuf::with_capacity(10);
-    assert!(p.wr().free_space().is_none());
-    p.wr().append(b"0123456789");
-    p.wr().append(b"ABCDEFGHIJ");
+    let mut p = PipeBuf::new(10, 1024);
+    assert!(p.wr().free() >= 1024);
+    assert!(p.wr().append(b"0123456789"));
+    assert!(p.wr().append(b"ABCDEFGHIJ"));
     assert_eq!(b"0123456789ABCDEFGHIJ", p.rd().data());
 }
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[test]
 fn create_with_new() {
-    let mut p = PipeBuf::new();
-    assert!(p.wr().free_space().is_none());
-    p.wr().try_space(23).unwrap()[..10].copy_from_slice(b"0123456789");
+    let mut p = PipeBuf::new(0, 1024);
+    assert!(p.wr().free() >= 1024);
+    p.wr().space(23).unwrap()[..10].copy_from_slice(b"0123456789");
     p.wr().commit(10);
-    p.wr().space(17)[..10].copy_from_slice(b"ABCDEFGHIJ");
+    p.wr().space(17).unwrap()[..10].copy_from_slice(b"ABCDEFGHIJ");
     p.wr().commit(10);
     assert_eq!(b"0123456789ABCDEFGHIJ", p.rd().data());
 }
@@ -376,10 +418,11 @@ fn create_with_new() {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[test]
 fn create_with_new_u16() {
-    let mut p = PipeBuf::<u16>::new();
-    p.wr().try_space(13).unwrap()[..5].copy_from_slice(&[0, 1, 2, 3, 4]);
+    let mut p = PipeBuf::<u16>::new(0, 500);
+    assert!(p.wr().free() >= 500);
+    p.wr().space(13).unwrap()[..5].copy_from_slice(&[0, 1, 2, 3, 4]);
     p.wr().commit(5);
-    p.wr().space(9)[..7].copy_from_slice(&[5, 6, 7, 8, 9, 10, 11]);
+    p.wr().space(9).unwrap()[..7].copy_from_slice(&[5, 6, 7, 8, 9, 10, 11]);
     p.wr().commit(7);
     assert_eq!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], p.rd().data());
     p.rd().consume(6);
@@ -389,10 +432,11 @@ fn create_with_new_u16() {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[test]
 fn create_with_new_char() {
-    let mut p = PipeBuf::<char>::new();
-    p.wr().try_space(13).unwrap()[..5].copy_from_slice(&['0', '1', '2', '3', '4']);
+    let mut p = PipeBuf::<char>::new(0, 200);
+    assert!(p.wr().free() >= 200);
+    p.wr().space(13).unwrap()[..5].copy_from_slice(&['0', '1', '2', '3', '4']);
     p.wr().commit(5);
-    p.wr().space(9)[..7].copy_from_slice(&['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+    p.wr().space(9).unwrap()[..7].copy_from_slice(&['a', 'b', 'c', 'd', 'e', 'f', 'g']);
     p.wr().commit(7);
     assert_eq!(
         ['0', '1', '2', '3', '4', 'a', 'b', 'c', 'd', 'e', 'f', 'g'],
@@ -402,6 +446,21 @@ fn create_with_new_char() {
     assert_eq!(['b', 'c', 'd', 'e', 'f', 'g'], p.rd().data());
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[test]
+fn space_upto() {
+    let mut p = PipeBuf::<u8>::new(10, 1024);
+    assert!(p.wr().free() >= 1024);
+    let len = p.wr().space_upto(10).len();
+    assert_eq!(len, 10);
+    let len = p.wr().space_upto(100).len(); // Should call `try_make_space`
+    assert_eq!(len, 100);
+    let len = p.wr().space_all().len(); // Should call `try_make_space`
+    assert_eq!(len, p.wr().free());
+    let len = p.wr().space_upto(10000).len();
+    assert_eq!(len, p.wr().free());
+}
+
 /// Test that buffer shifts down properly when there is both unread
 /// data and not enough space.  Test is slightly different on "alloc"
 /// and "static" since Vec rounds up.
@@ -409,23 +468,28 @@ fn create_with_new_char() {
 #[test]
 fn compact_buffer() {
     let mut p = fixed_capacity_pipebuf!(13);
-    p.wr().append(b"0123456789");
+    assert!(p.wr().append(b"0123456789"));
     assert_eq!(b"0123456789", p.rd().data());
     p.rd().consume(5);
-    p.wr().append(b"ABCDE");
+    assert!(p.wr().append(b"ABCDE"));
     assert_eq!(b"56789ABCDE", p.rd().data());
     p.rd().consume(5);
-    p.wr().append(b"FGHIJ");
+    assert!(p.wr().append(b"FGHIJ"));
     assert_eq!(b"ABCDEFGHIJ", p.rd().data());
     p.rd().consume(5);
-    p.wr().append(b"KLMNO");
+    assert!(p.wr().append(b"KLMNO"));
     assert_eq!(b"FGHIJKLMNO", p.rd().data());
     p.rd().consume(5);
-    p.wr().append(b"PQRST");
+    assert!(p.wr().append(b"PQRST"));
     assert_eq!(b"KLMNOPQRST", p.rd().data());
     p.rd().consume(5);
-    p.wr().append(b"UVWXYZ");
+    assert!(p.wr().append(b"UVWXYZ"));
     assert_eq!(b"PQRSTUVWXYZ", p.rd().data());
+    // Check that append reports failure correctly
+    assert_eq!(
+        false,
+        p.wr().append(b"0123456789012345678901234567890123456789")
+    );
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
@@ -463,7 +527,7 @@ fn rd_tripwire() {
         ($eof:expr, $cb:expr) => {{
             let cb = $cb;
             p.reset();
-            p.wr().append(b"0123456789");
+            assert!(p.wr().append(b"0123456789"));
             if $eof {
                 p.wr().close();
             } else {
@@ -498,7 +562,7 @@ fn forward() {
         };
     }
 
-    p.wr().append(b"01234");
+    assert!(p.wr().append(b"01234"));
     assert!(!p.rd().is_empty());
     forward!();
     assert!(p.rd().is_empty());
@@ -507,7 +571,7 @@ fn forward() {
     assert!(!q.rd().consume_push());
     assert!(!q.rd().consume_eof());
 
-    p.wr().append(b"ABC");
+    assert!(p.wr().append(b"ABC"));
     p.wr().push();
     forward!();
     assert_eq!(b"ABC", q.rd().data());
@@ -542,7 +606,7 @@ fn read_trait() {
 
     // Read with bytes available
     let mut buf = [0; 10];
-    p.wr().append(b"01234");
+    assert!(p.wr().append(b"01234"));
     assert!(matches!(p.rd().read(buf.as_mut_slice()), Ok(5)));
     assert_eq!(*b"01234", buf[..5]);
 
@@ -561,7 +625,7 @@ fn read_trait() {
 
     // Read at normal EOF with data
     p.reset();
-    p.wr().append(b"ABCD");
+    assert!(p.wr().append(b"ABCD"));
     p.wr().close();
     assert!(matches!(p.rd().read(buf.as_mut_slice()), Ok(4)));
     assert_eq!(*b"ABCD", buf[..4]);
@@ -612,13 +676,13 @@ fn output_to() {
     // Test data output (and ignoring Interrupted on write)
     let mut p = fixed_capacity_pipebuf!(10);
     dest.write_err_interrupted = true;
-    p.wr().append(b"0123456");
+    assert!(p.wr().append(b"0123456"));
     assert!(p.rd().output_to(&mut dest, false).is_ok());
     assert_eq!(b"0123456", dest.buf.as_slice());
     assert_eq!(false, dest.flushed);
 
     // Test "push" -> "flush"
-    p.wr().append(b"789");
+    assert!(p.wr().append(b"789"));
     p.wr().push();
     assert!(p.rd().output_to(&mut dest, false).is_ok());
     assert_eq!(b"0123456789", dest.buf.as_slice());
@@ -627,14 +691,14 @@ fn output_to() {
     // Test force_flush == true (and ignoring Interrupted on flush)
     dest.flushed = false;
     dest.flush_err_interrupted = true;
-    p.wr().append(b"ABCD");
+    assert!(p.wr().append(b"ABCD"));
     assert!(p.rd().output_to(&mut dest, true).is_ok());
     assert_eq!(b"0123456789ABCD", dest.buf.as_slice());
     assert_eq!(true, dest.flushed);
 
     // Test write error passthrough
     dest.write_err_wouldblock = true;
-    p.wr().append(b"EFG");
+    assert!(p.wr().append(b"EFG"));
     match p.rd().output_to(&mut dest, false) {
         Err(e) if e.kind() == ErrorKind::WouldBlock => (),
         _ => panic!("Expecting WouldBlock"),
@@ -666,7 +730,7 @@ fn output_to_panic() {
     }
     let mut dest = Dest;
     let mut p = fixed_capacity_pipebuf!(10);
-    p.wr().append(b"01234");
+    assert!(p.wr().append(b"01234"));
     let _ = p.rd().output_to(&mut dest, false); // Should panic
 }
 
@@ -706,17 +770,6 @@ fn write_with() {
     p.rd().consume(3);
 }
 
-#[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
-#[test]
-fn exceeds_limit() {
-    let mut p = fixed_capacity_pipebuf!(10);
-    assert!(!p.wr().exceeds_limit(5));
-    p.wr().append(b"01234");
-    assert!(!p.wr().exceeds_limit(5));
-    p.wr().append(b"5");
-    assert!(p.wr().exceeds_limit(5));
-}
-
 #[cfg(any(feature = "std"))]
 #[test]
 fn input_from() {
@@ -751,30 +804,30 @@ fn input_from() {
     let mut input = Source::default();
     input.data.extend_from_slice(b"01234567");
     input.err_interrupted = true;
-    assert!(p.wr().input_from(&mut input, 5).is_ok());
+    assert!(p.wr().input_from_upto(&mut input, 5).is_ok());
     assert_eq!(5, p.rd().len());
-    match p.wr().input_from(&mut input, 5) {
+    match p.wr().input_from_upto(&mut input, 5) {
         Err(e) if e.kind() == ErrorKind::WouldBlock => (),
         _ => panic!("Expecting WouldBlock"),
     }
     assert_eq!(8, p.rd().len());
     input.data.extend_from_slice(b"8");
     input.eof = true;
-    assert!(p.wr().input_from(&mut input, 5).is_ok());
+    assert!(p.wr().input_from(&mut input).is_ok());
     assert_eq!(9, p.rd().len());
     assert_eq!(true, p.wr().is_eof());
     assert_eq!(b"012345678", p.rd().data());
 
     // Reading after EOF, does nothing
     input.data.extend_from_slice(b"9");
-    assert!(p.wr().input_from(&mut input, 5).is_ok());
+    assert!(p.wr().input_from(&mut input).is_ok());
     assert_eq!(9, p.rd().len());
 }
 
 #[cfg(any(feature = "std"))]
 #[test]
 fn write_trait() {
-    use std::io::Write;
+    use std::io::{ErrorKind, Write};
 
     let mut p = fixed_capacity_pipebuf!(10);
     assert!(p.wr().write(b"012345").is_ok());
@@ -783,6 +836,15 @@ fn write_trait() {
 
     assert!(p.wr().flush().is_ok());
     assert_eq!(true, p.rd().consume_push());
+
+    // Writing too much should do a partial write
+    if let Ok(len) = p.wr().write(b"0123456789012345678901234567890123456789") {
+        assert!(len > 0 && len < 40);
+    } else {
+        panic!("Partial write failed");
+    }
+    // Writing when buffer is full should give WouldBlock
+    assert!(matches!(p.wr().write(b"0123"), Err(e) if e.kind() == ErrorKind::WouldBlock));
 }
 
 #[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
@@ -790,7 +852,7 @@ fn write_trait() {
 fn pipebufpair_fixed() {
     let mut p = fixed_capacity_pipebufpair!(10);
 
-    p.upper().wr.append(b"01234");
+    assert!(p.upper().wr.append(b"01234"));
     p.upper().wr.close();
     assert_eq!(b"01234", p.lower().rd.data());
     assert_eq!(b"01234", p.right().rd.data());
@@ -799,7 +861,7 @@ fn pipebufpair_fixed() {
     p.reset();
     assert_eq!(false, p.lower().rd.consume_eof());
 
-    p.lower().wr.append(b"56789");
+    assert!(p.lower().wr.append(b"56789"));
     p.lower().wr.abort();
     assert_eq!(b"56789", p.upper().rd.data());
     assert_eq!(b"56789", p.left().rd.data());
@@ -812,17 +874,38 @@ fn pipebufpair_fixed() {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[test]
 fn pipebufpair_var() {
-    let mut p = PipeBufPair::default();
+    let mut p = PipeBufPair::fixed(100, 100);
     let ut = p.upper().tripwire();
     let lt = p.lower().tripwire();
-    p.upper().wr.append(b"01234");
+    let pt = p.tripwire();
+    assert!(p.upper().wr.append(b"01234"));
     assert!(ut != p.upper().tripwire());
     assert!(lt != p.lower().tripwire());
+    assert!(pt != p.tripwire());
+    assert_eq!(p.tripwire(), (p.down.tripwire(), p.up.tripwire()));
 
-    let mut p = PipeBufPair::with_capacities(10, 10);
+    let mut p = PipeBufPair::new(10, 100, 10, 100);
     let ut = p.upper().tripwire();
     let lt = p.lower().tripwire();
-    p.lower().wr.append(b"01234");
-    assert!(ut != p.upper().tripwire());
-    assert!(lt != p.lower().tripwire());
+    let pt = p.tripwire();
+    let cb = |rdwr: PBufRdWr| rdwr.tripwire();
+    assert!(p.lower().wr.append(b"01234"));
+    assert!(ut != cb(p.upper().reborrow()));
+    assert!(lt != cb(p.lower().reborrow()));
+    assert!(pt != p.tripwire());
+    assert_eq!(p.tripwire(), (p.down.tripwire(), p.up.tripwire()));
+}
+
+#[cfg(any(feature = "std", feature = "alloc", feature = "static"))]
+#[test]
+fn pbuftrip() {
+    let p = fixed_capacity_pipebuf!(10);
+    assert_eq!(p.tripwire(), PBufTrip::default());
+    assert_eq!(PBufTrip::from(0), PBufTrip::default());
+}
+
+#[test]
+fn runstatus() {
+    assert_eq!(RunStatus::Blocked, RunStatus::Blocked);
+    let _ = RunStatus::Done.clone();
 }

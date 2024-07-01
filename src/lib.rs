@@ -5,9 +5,9 @@
 //! [![Coverage:99%][5]](https://docs.rs/pipebuf)
 //!
 //! [1]: https://img.shields.io/badge/license-MIT%2FApache--2.0-blue
-//! [2]: https://img.shields.io/badge/github-uazu%2Fstakker-brightgreen
-//! [3]: https://img.shields.io/badge/crates.io-stakker-red
-//! [4]: https://img.shields.io/badge/docs.rs-stakker-purple
+//! [2]: https://img.shields.io/badge/github-uazu%2Fpipebuf-brightgreen
+//! [3]: https://img.shields.io/badge/crates.io-pipebuf-red
+//! [4]: https://img.shields.io/badge/docs.rs-pipebuf-purple
 //! [5]: https://img.shields.io/badge/Coverage-99%25-blue
 //!
 //! Efficient byte-stream pipe buffer
@@ -64,6 +64,7 @@
 //! situation, please open a [Discussion
 //! item](https://github.com/uazu/pipebuf/discussions).
 //!
+//!
 //! # Bidirectional streams
 //!
 //! [`PipeBufPair`] puts two pipe-buffers together to make a
@@ -72,6 +73,7 @@
 //! references [`PBufRdWr`] can be obtained for either end of the
 //! stream to pass to the component which handles that end of the
 //! stream.
+//!
 //!
 //! # Separation of concerns
 //!
@@ -97,6 +99,28 @@
 //! is required, especially compared to the situation when using the
 //! `Read` trait.
 //!
+//!
+//! # Capacity limit
+//!
+//! [`PipeBuf`] instances must always specify a maximum capacity.
+//! This has several advantages:
+//!
+//! - There is built-in protection from denial-of-service through
+//! memory exhaustion.  A malicious actor can't exploit a bug to cause
+//! the internal generation of a huge amount of data and consume all
+//! memory.
+//!
+//! - Some components that can produce large or unlimited amounts of
+//! data (such as a file reader or a decompressor) have a limit to
+//! fill up to.
+//!
+//! - It provides backpressure if backpressure is not implemented at a
+//! higher level
+//!
+//! However this means that components always have to check that there
+//! is enough space downstream to write to before processing data.
+//!
+//!
 //! # Writing interoperable components using [`PipeBuf`]
 //!
 //! Your component code (e.g. a protocol or data-processing
@@ -111,7 +135,7 @@
 //! in response to events other than input, depending on the
 //! application.
 //!
-//! If possible, a "process" method should return an "activity"
+//! If convenient, a "process" method should return an "activity"
 //! status.  This should be `true` if the call was able to consume or
 //! produce any data at all (including changing the input or output
 //! state in any way, including EOF), or `false` if it was not able to
@@ -148,6 +172,18 @@
 //!     -> Result<bool, TlsError> {...}
 //! ```
 //!
+//! Since [`PipeBuf`] supports backpressure, it's necessary for a
+//! "process" call to both identify some work to do (e.g. identify a
+//! unit of input data) and also check that there is enough space to
+//! output the result.  Only when both conditions are met can the work
+//! be done, consuming input and committing output.
+//!
+//! The component writer needs to handle conditions that may lead to a
+//! stuck or hung network.  For example, waiting to output a huge
+//! packet whose size is larger than the output buffer capacity will
+//! never succeed and will hang the network.  This needs handling as
+//! an individual packet abort, or else a component failure.
+//!
 //! If the "process" call also needs to input/output other types than
 //! just bytes, then there are a few options:
 //!
@@ -169,16 +205,23 @@
 //! So there are many ways that you could approach your API design,
 //! and [`PipeBuf`] doesn't limit you much in this regard.
 //!
+//!
 //! # Writing the glue code to host [`PipeBuf`]-based components
 //!
 //! Firstly you'll need to create all the [`PipeBuf`] instances and
 //! then all of the component structures which will connect them
 //! together (for example, compressor, TLS implementation, etc) or
 //! that will act as sources or sinks of data (for example, file
-//! writer, file reader, TCP forwarder, etc).  This forms a network
-//! which the glue code will connect together by making "process" or
-//! other method calls on the components to move data into and out of
-//! the buffers.
+//! writer, file reader, TCP forwarder, etc).  This forms a chain or
+//! network of components which the glue code will connect together by
+//! making "process" or other method calls on the components to move
+//! data into and out of the buffers.
+//!
+//! Then you need to introduce data into the network and run the
+//! components to completion.  The glue code can be written manually
+//! for maximum control, or alternatively in most cases the
+//! `pipebuf_run!` macro in the **pipebuf_run** crate should simplify
+//! the logic.
 //!
 //! A simple way of running the network to exhaustion would be to just
 //! keep calling all the "process"/etc calls on all of the structures
@@ -191,10 +234,11 @@
 //! advance that.
 //!
 //! If any component call does not provide an activity status, then
-//! you'll have to synthesize an activity status for it.  You'll need
-//! to check all of the input and output buffers used by the call for
-//! changes, for example by using tripwires (see [`PBufTrip`]) and
-//! comparing the trip values before/after the call.
+//! you'll have to synthesize an activity status for it
+//! (`pipebuf_run!` does this automatically).  You'll need to check
+//! all of the input and output buffers used by the call for changes,
+//! for example by using tripwires (see [`PBufTrip`] and `tripwire!`)
+//! and comparing the trip values before/after the call.
 //!
 //! Then you have to consider how you are going to regulate
 //! introducing data into your network.  Here are some examples:
@@ -218,45 +262,38 @@
 //! made right now.
 //!
 //! Typically you'll want to read input byte-data into your network
-//! with a limited maximum chunk size, and after each chunk of data,
-//! run the rest of the network to exhaustion to avoid having excess
-//! data build up within your network's [`PipeBuf`] instances.
+//! with a limited maximum chunk size, perhaps implemented by having a
+//! fixed-size [`PipeBuf`] as the first buffer in the chain.  Then
+//! after each fill of the first buffer, you'd run the rest of the
+//! network to exhaustion to avoid having excess data build up within
+//! your network's [`PipeBuf`] instances.  (`pipebuf_run!` supports
+//! this model.)
 //!
 //! Output from the network may also be limited if any of the sinks
 //! implement backpressure.  For example TCP won't let you write more
-//! data if the kernel can't forward anything else right now.  If
-//! you're running in a blocking environment, then your TCP output
-//! code will block and so no more input data will be processed until
-//! TCP clears.  This may be exactly what you want.  In a non-blocking
-//! environment, you may receive an indication when TCP is able to
-//! accept more data.  In that case you have a choice of whether to
-//! continue to accept input and let the output data build up in the
-//! last [`PipeBuf`] before the TCP output, or else detect that
-//! buildup and pause the entire network until the backpressure goes
-//! away, which has the effect of propagating the backpressure.
+//! data if the kernel can't forward anything else right now.  There
+//! are two ways to handle backpressure:
+//!
+//! - Let the backpressure propagate backwards through the network,
+//! filling each of the buffers to capacity, until eventually it
+//! reaches the input components, which with nowhere to write data
+//! will stop reading more data.  This unfortunately means that all
+//! the buffers will have been reallocated to their maximum capacity.
+//!
+//! - Detect backpressure on outputs and stop reading input data until
+//! it passes.  This is the most efficient way and avoids building up
+//! too much data in the component chain or network.  In a blocking
+//! environment this may happen automatically: For example, writing to
+//! the TCP output will block and that stops everything proceeding
+//! (including input) until data starts to flow again.  For a
+//! non-blocking environment this has to be implemented in the glue
+//! code.  (`pipebuf_run!` supports this.)
 //!
 //! Finally you need to decide when the network has finished in order
 //! to stop running it.  Typically this means checking
 //! [`PipeBuf::is_done`] on the externally-visible outputs.
+//! (`pipebuf_run!` supports this.)
 //!
-//! # Backpressure
-//!
-//! The model here is that backpressure is handled by the glue code,
-//! and that in general the components can act as if there is
-//! sufficient space in their output buffers, even in the case of
-//! fixed-size buffers.  It is assumed that everything has been sized
-//! appropriately ahead of time.  So the glue code needs to check that
-//! the outputs are able to accept data before accepting input data
-//! and running it through the chain or network of components.
-//!
-//! However in the case of components that don't output a predictable
-//! amount of data given a certain number of input bytes (for example
-//! decompression), that component may need to be given fixed-size
-//! output buffer to limit its output, and it needs to check how much
-//! free space it has available.  Calls like [`PBufWr::free_space`]
-//! and [`PBufWr::try_space`] support that case.  The glue code may
-//! need to run the downstream chain repeatedly until the decompressor
-//! has caught up.
 //!
 //! # Safety and efficiency
 //!
@@ -289,13 +326,13 @@
 //! avoids this problem, but this may not be flexible enough for some
 //! uses of the pipe-buffer.
 //!
-//! - By writing more data to a closed pipe, or by closing a pipe
-//! twice.  This will cause a panic.
+//! - By writing more data to a closed pipe.  This will cause a panic.
 //!
 //! - By passing different pipe-buffers to the same component on
 //! different method calls.  That is guaranteed to confuse things.
 //! But it is hard to do by mistake as the pipe-buffer argument will
 //! typically be hardcoded in the glue code.
+//!
 //!
 //! # `Read` and `Write` traits
 //!
@@ -320,21 +357,16 @@
 //! going to have to buffer it again somewhere else until you have
 //! enough data, which is a duplication of buffering.
 //!
+//!
 //! # `no_std` support
 //!
 //! For a `no_std` environment, if `alloc` is supported then you can
 //! use **pipebuf** normally.  In your **Cargo.toml** add `pipebuf = {
 //! version = "...", default-features = false, features = ["alloc"]
-//! }`.  If you wish to use fixed-capacity buffers (to keep
-//! allocations from growing) this is supported using
-#![cfg_attr(
-    any(feature = "std", feature = "alloc"),
-    doc = "[`PipeBuf::with_fixed_capacity`]"
-)]
-#![cfg_attr(
-    not(any(feature = "std", feature = "alloc")),
-    doc = "`PipeBuf::with_fixed_capacity`"
-)]
+//! }`.  If you wish to use fixed-capacity buffers (to avoid
+//! reallocations) this is supported using
+#![cfg_attr(any(feature = "std", feature = "alloc"), doc = "[`PipeBuf::fixed`]")]
+#![cfg_attr(not(any(feature = "std", feature = "alloc")), doc = "`PipeBuf::fixed`")]
 //! .
 //!
 //! If no heap is available, a [`PipeBuf`] may be backed by a fixed
@@ -350,14 +382,6 @@
 //! pool), use [`PipeBuf::reset_and_zero`] or [`PipeBuf::reset`] to
 //! prepare the buffer before re-use.
 //!
-//! If a fixed capacity buffer's capacity is exceeded then the code
-//! will panic rather than make any attempt to reallocate the buffer.
-//! So you need to set the capacity to a safe value considering the
-//! maximum amount of unconsumed data that might need to be stored by
-//! the consumer plus the maximum size of data that might need to be
-//! written as a unit by the producer, e.g. considering the maximum
-//! record size or the maximum permitted line length or the maximum
-//! chunk or block size.
 //!
 //! # `no_std` support in components
 //!
@@ -369,6 +393,7 @@
 //! component crate should not select `alloc` or `static` features
 //! unless it really needs them, as that would limit the options for
 //! the crate user.
+//!
 //!
 //! # Using this as a dependency ... or not
 //!
@@ -397,6 +422,7 @@
 //! Ideally this would be in `std` so that it would be an obvious
 //! choice to standardize around, like `Vec` and `HashMap`.
 //!
+//!
 //! # Structure of the storage
 //!
 //! The internal `Vec` has the following segments:
@@ -419,6 +445,7 @@
 //! space by writing zeros and then afterwards rewind to the actual
 //! length read, since I/O calls require a mutable slice to write to.
 //!
+//!
 //! # Using this crate with a type other than `u8`
 //!
 //! This crate is optimised for handling byte-streams.  However it's
@@ -430,12 +457,11 @@
 //! consume a variable quantity of it depending on what it sees.  If
 //! you only need to consume one item at a time then `VecDeque` from
 //! `std` is preferable because it is a ring buffer so doesn't need to
-//! copy data down from time to time to compress the buffer.
+//! move data down from time to time to compact the buffer.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
 
 // We don't mind if they enable both 'std' and 'alloc' together since
 // they have the same API, and 'std' can take precedence, but the
@@ -462,6 +488,9 @@ pub use rd::PBufRd;
 mod pair;
 pub use pair::{PBufRdWr, PipeBufPair};
 
+mod run;
+pub use run::RunStatus;
+
 /// Form a tuple of tripwire values
 ///
 /// This is intended to be used to create a tuple of [`PBufTrip`]
@@ -473,10 +502,10 @@ pub use pair::{PBufRdWr, PipeBufPair};
     doc = "
 ```
 # use pipebuf::{tripwire, PipeBuf};
-# let p1 = PipeBuf::<u8>::new();
-# let p2 = PipeBuf::<u8>::new();
-# let p3 = PipeBuf::<u8>::new();
-# let p4 = PipeBuf::<u8>::new();
+# let p1 = PipeBuf::<u8>::fixed(10);
+# let p2 = PipeBuf::<u8>::fixed(10);
+# let p3 = PipeBuf::<u8>::fixed(10);
+# let p4 = PipeBuf::<u8>::fixed(10);
 let before = tripwire!(p1, p2, p3, p4);
 // some operation on p1/p2/p3/p4 ...
 let after = tripwire!(p1, p2, p3, p4);

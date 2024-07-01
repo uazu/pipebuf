@@ -22,43 +22,34 @@ pub struct PipeBufPair<T: 'static = u8> {
 }
 
 impl<T: Copy + Default + 'static> PipeBufPair<T> {
-    /// Create a new empty bidirectional pipe
+    /// Create a new bidirectional pipe with the given minimum and
+    /// maximum capacities in each direction
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[inline]
-    pub fn new() -> Self {
+    pub fn new(
+        down_cap_min: usize,
+        down_cap_max: usize,
+        up_cap_min: usize,
+        up_cap_max: usize,
+    ) -> Self {
         Self {
-            down: PipeBuf::new(),
-            up: PipeBuf::new(),
-        }
-    }
-
-    /// Create a new bidirectional pipe buffer with the given initial
-    /// capacity in the two directions
-    #[cfg(any(feature = "std", feature = "alloc"))]
-    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-    #[inline]
-    pub fn with_capacities(down_size: usize, up_size: usize) -> Self {
-        Self {
-            down: PipeBuf::with_capacity(down_size),
-            up: PipeBuf::with_capacity(up_size),
+            down: PipeBuf::new(down_cap_min, down_cap_max),
+            up: PipeBuf::new(up_cap_min, up_cap_max),
         }
     }
 
     /// Create a new bidirectional pipe buffer with the given fixed
-    /// capacity in the two directions.  The buffers will never be
-    /// reallocated.  If a [`PBufWr::space`] call requests more space
-    /// than is available, then the call will panic.
+    /// capacities in the two directions
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[inline]
-    pub fn with_fixed_capacities(down_size: usize, up_size: usize) -> Self {
+    pub fn fixed(down_cap: usize, up_cap: usize) -> Self {
         Self {
-            down: PipeBuf::with_fixed_capacity(down_size),
-            up: PipeBuf::with_fixed_capacity(up_size),
+            down: PipeBuf::fixed(down_cap),
+            up: PipeBuf::fixed(up_cap),
         }
     }
 
@@ -129,14 +120,12 @@ impl<T: Copy + Default + 'static> PipeBufPair<T> {
         self.down.reset_and_zero();
         self.up.reset_and_zero();
     }
-}
 
-#[cfg(any(feature = "std", feature = "alloc"))]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-impl<T: Copy + Default + 'static> Default for PipeBufPair<T> {
-    fn default() -> Self {
-        Self::new()
+    /// Generate tripwire values for both `down` and `up` halves of the
+    /// pipe.  See [`PBufTrip`] for more details.
+    #[inline]
+    pub fn tripwire(&self) -> (PBufTrip, PBufTrip) {
+        (self.down.tripwire(), self.up.tripwire())
     }
 }
 
